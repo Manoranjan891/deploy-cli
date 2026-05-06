@@ -84,7 +84,8 @@ cat > "${SANDBOX_CONFIG}" <<EOF
     "guardianFactorTemplates",
     "guardianPhoneFactorMessageTypes",
     "guardianPhoneFactorSelectedProvider",
-    "guardianPolicies"
+    "guardianPolicies",
+    "logStreams"
   ]
 }
 EOF
@@ -152,7 +153,8 @@ cat > "${DEV_CONFIG}" <<EOF
     "guardianFactorTemplates",
     "guardianPhoneFactorMessageTypes",
     "guardianPhoneFactorSelectedProvider",
-    "guardianPolicies"
+    "guardianPolicies",
+    "logStreams"
   ]
 }
 EOF
