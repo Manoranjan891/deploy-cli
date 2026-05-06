@@ -168,7 +168,7 @@ EOF
 
 IMPORT_ARGS=(
   --format yaml
-  --input_file "${EXPORT_DIR}"
+  --input_file "${EXPORT_DIR}/tenant.yaml"
   --config_file "${DEV_CONFIG}"
 )
 
@@ -178,6 +178,8 @@ if [ "${AUTH0_ALLOW_DELETE}" = "true" ]; then
 fi
 
 log_info "Running: a0deploy import --format yaml --input_file ${EXPORT_DIR}"
+log_info "Listing exported files for verification:"
+find "${EXPORT_DIR}" -type f | head -50
 
 a0deploy import "${IMPORT_ARGS[@]}"
 
