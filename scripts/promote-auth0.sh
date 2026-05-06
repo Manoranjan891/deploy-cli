@@ -133,28 +133,8 @@ find "${EXPORT_DIR}" -type f \( -name "*.yaml" -o -name "*.json" \) \
   -exec sed -i "s|${SANDBOX_API_AUDIENCE}|${DEV_API_AUDIENCE}|g" {} +
 
 # Remove custom login page incompatibility from database connections
-# (Strips "strategy" attributes that conflict with custom login page in Dev)
 if [ -f "${EXPORT_DIR}/tenant.yaml" ]; then
-  # Remove the requires_username flag if set (causes issues with custom DB)
   sed -i 's/requires_username: true/requires_username: false/g' "${EXPORT_DIR}/tenant.yaml"
-fi
-
-# Remove Contoso-Users database (incompatible with Custom Login Page in Dev)
-if [ -d "${EXPORT_DIR}/databases/Contoso-Users" ]; then
-  log_info "Removing incompatible database folder: Contoso-Users"
-  rm -rf "${EXPORT_DIR}/databases/Contoso-Users"
-fi
-
-# Remove Contoso-Users from tenant.yaml (multi-line YAML block)
-# Uses awk to skip the entire block starting with "- name: Contoso-Users" until the next "- name:"
-if grep -q "Contoso-Users" "${EXPORT_DIR}/tenant.yaml"; then
-  log_info "Removing Contoso-Users block from tenant.yaml"
-  awk '
-    /^[[:space:]]*- name: Contoso-Users/ { skip=1; next }
-    skip && /^[[:space:]]*- name:/ { skip=0 }
-    !skip { print }
-  ' "${EXPORT_DIR}/tenant.yaml" > "${EXPORT_DIR}/tenant.yaml.tmp"
-  mv "${EXPORT_DIR}/tenant.yaml.tmp" "${EXPORT_DIR}/tenant.yaml"
 fi
 
 log_ok "Transformation complete."
