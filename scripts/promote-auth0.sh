@@ -445,14 +445,35 @@ if [ "${VAULT_HTTP}" = "200" ]; then
         # Add to mapping
         echo "$(cat "${VAULT_MAP_FILE}")" | jq --arg sid "${CONN_ID}" --arg did "${DEV_CONN_ID}" '. + {($sid): $did}' > "${VAULT_MAP_FILE}"
       else
-        # Create in Dev — only send fields valid for creation
-        # Strip all read-only/computed fields; keep only: name, app_id, setup
-        CREATE_VC_PAYLOAD=$(echo "${conn}" | jq '{
-          name,
-          app_id,
-          setup: (if .setup != null then .setup else {} end)
-        } | with_entries(select(.value != null and .value != ""))')
-        log_info "  Creating vault connection '${CONN_NAME}' with payload: $(echo "${CREATE_VC_PAYLOAD}" | jq -c '.')"
+        # Create in Dev — AUTH0 type connections need valid setup credentials
+        # Auth0 NEVER exports setup/secrets, so we must provide Dev M2M creds
+        if [ "${CONN_APP_ID}" = "AUTH0" ]; then
+          # AUTH0 vault connections use M2M credentials to connect
+          CREATE_VC_PAYLOAD=$(jq -n \
+            --arg name "${CONN_NAME}" \
+            --arg app_id "AUTH0" \
+            --arg client_id "${DEV_AUTH0_CLIENT_ID}" \
+            --arg client_secret "${DEV_AUTH0_CLIENT_SECRET}" \
+            --arg domain "${DEV_AUTH0_DOMAIN}" \
+            '{
+              name: $name,
+              app_id: $app_id,
+              setup: {
+                type: "INSTALL",
+                client_id: $client_id,
+                client_secret: $client_secret,
+                domain: $domain
+              }
+            }')
+        else
+          # Non-AUTH0 connections (HTTP, custom) — create with minimal payload
+          CREATE_VC_PAYLOAD=$(echo "${conn}" | jq '{
+            name,
+            app_id
+          } | with_entries(select(.value != null and .value != ""))')
+          log_info "    (Non-AUTH0 type: '${CONN_APP_ID}' — may need manual setup)"
+        fi
+        log_info "  Creating vault connection '${CONN_NAME}' (app_id: ${CONN_APP_ID})"
         RESULT=$(curl -s --request POST \
           --url "https://${DEV_AUTH0_DOMAIN}/api/v2/flows/vault/connections" \
           --header "authorization: Bearer ${DEV_TOKEN}" \
@@ -462,13 +483,12 @@ if [ "${VAULT_HTTP}" = "200" ]; then
         NEW_ID=$(echo "${RESULT}" | jq -r '.id // empty')
         if [ -n "${NEW_ID}" ]; then
           echo "  ✓ Created vault connection '${CONN_NAME}' in Dev (id: ${NEW_ID})"
-          echo "    ⚠ SECRET VALUES NEED MANUAL CONFIGURATION in Dev tenant!"
           echo "$(cat "${VAULT_MAP_FILE}")" | jq --arg sid "${CONN_ID}" --arg did "${NEW_ID}" '. + {($sid): $did}' > "${VAULT_MAP_FILE}"
         else
           echo "  ⚠ Failed to create vault connection '${CONN_NAME}': $(echo "${RESULT}" | jq -c '.')"
         fi
       fi
-    done
+    done || true
     log_ok "Vault connections synced (secrets need manual setup in Dev)."
   else
     log_info "No vault connections found in Sandbox."
@@ -567,7 +587,7 @@ if [ "${FLOWS_HTTP}" = "200" ]; then
           echo "  ⚠ Failed to create flow '${FLOW_NAME}': $(echo "${RESULT}" | jq -r '.message // .error // "unknown"')"
         fi
       fi
-    done
+    done || true
     log_ok "Flows synced."
   else
     log_info "No flows found in Sandbox."
@@ -598,9 +618,13 @@ if [ "${FORMS_HTTP}" = "200" ]; then
       --header "authorization: Bearer ${DEV_TOKEN}")
     DEV_FORMS=$(echo "${DEV_FORMS_RAW}" | jq -c 'if type == "array" then . elif .forms then .forms else [] end' 2>/dev/null || echo "[]")
 
-    echo "${FORMS}" | jq -c '.[]' | while read -r form; do
-      FORM_ID=$(echo "${form}" | jq -r '.id')
-      FORM_NAME=$(echo "${form}" | jq -r '.name')
+    echo "${FORMS}" | jq -c '.[]' 2>/dev/null | while read -r form || [ -n "${form}" ]; do
+      FORM_ID=$(echo "${form}" | jq -r '.id' 2>/dev/null || echo "")
+      FORM_NAME=$(echo "${form}" | jq -r '.name' 2>/dev/null || echo "unknown")
+
+      if [ -z "${FORM_ID}" ] || [ "${FORM_ID}" = "null" ]; then
+        continue
+      fi
 
       log_info "Processing form: '${FORM_NAME}' (id: ${FORM_ID})"
       sleep 1  # Rate limit protection
@@ -610,8 +634,14 @@ if [ "${FORMS_HTTP}" = "200" ]; then
         --url "https://${SANDBOX_AUTH0_DOMAIN}/api/v2/forms/${FORM_ID}" \
         --header "authorization: Bearer ${SANDBOX_TOKEN}")
 
+      # Validate form detail was retrieved
+      if ! echo "${FORM_DETAIL}" | jq -e '.name' >/dev/null 2>&1; then
+        echo "  ⚠ Failed to fetch form detail for '${FORM_NAME}', skipping"
+        continue
+      fi
+
       # Clean up non-transferable fields
-      FORM_DEF=$(echo "${FORM_DETAIL}" | jq 'del(.id, .created_at, .updated_at)')
+      FORM_DEF=$(echo "${FORM_DETAIL}" | jq 'del(.id, .created_at, .updated_at, .links)')
 
       # Remap flow IDs in form (forms can embed flow references)
       FLOW_MAP=$(cat "${FLOW_MAP_FILE}")
@@ -658,7 +688,7 @@ if [ "${FORMS_HTTP}" = "200" ]; then
           echo "  ⚠ Failed to create form '${FORM_NAME}': $(echo "${RESULT}" | jq -r '.message // .error // "unknown"')"
         fi
       fi
-    done
+    done || true
     log_ok "Forms synced."
   else
     log_info "No forms found in Sandbox."
