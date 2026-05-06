@@ -139,6 +139,14 @@ if [ -f "${EXPORT_DIR}/tenant.yaml" ]; then
   sed -i 's/requires_username: true/requires_username: false/g' "${EXPORT_DIR}/tenant.yaml"
 fi
 
+# Remove Contoso-Users database (incompatible with Custom Login Page in Dev)
+if [ -d "${EXPORT_DIR}/databases/Contoso-Users" ]; then
+  log_info "Removing incompatible database: Contoso-Users"
+  rm -rf "${EXPORT_DIR}/databases/Contoso-Users"
+  # Also remove it from tenant.yaml if referenced
+  sed -i '/Contoso-Users/d' "${EXPORT_DIR}/tenant.yaml"
+fi
+
 log_ok "Transformation complete."
 
 # -----------------------------------------------------------------------------
