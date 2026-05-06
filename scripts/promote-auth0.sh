@@ -160,7 +160,8 @@ cat > "${DEV_CONFIG}" <<EOF
     "attackProtection",
     "organizations",
     "flows",
-    "flowVaultConnections"
+    "flowVaultConnections",
+    "forms"
   ]
 }
 EOF
