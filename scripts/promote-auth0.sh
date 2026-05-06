@@ -222,9 +222,15 @@ log_info "Running: a0deploy import --format yaml --input_file ${EXPORT_DIR}"
 log_info "Listing exported files for verification:"
 find "${EXPORT_DIR}" -type f | head -50
 
-a0deploy import "${IMPORT_ARGS[@]}"
+IMPORT_EXIT_CODE=0
+a0deploy import "${IMPORT_ARGS[@]}" || IMPORT_EXIT_CODE=$?
 
-log_ok "Import completed successfully via Deploy CLI."
+if [ "${IMPORT_EXIT_CODE}" -eq 0 ]; then
+  log_ok "Import completed successfully via Deploy CLI."
+else
+  log_error "Deploy CLI import exited with code ${IMPORT_EXIT_CODE} (some resources may have failed)."
+  log_info "Continuing with Management API sync..."
+fi
 
 # -----------------------------------------------------------------------------
 # Step 3: Sync resources excluded from Deploy CLI via Management API
@@ -413,3 +419,10 @@ echo "   resource servers, email, branding, prompts, triggers"
 echo " API synced: guardian, attack protection, log streams, organizations"
 echo " Manual setup needed: flows, forms, flow vault connections"
 echo "═══════════════════════════════════════════════════════════════════════════"
+
+# Exit with failure if Deploy CLI import had errors
+if [ "${IMPORT_EXIT_CODE}" -ne 0 ]; then
+  log_error "Pipeline completed with warnings — Deploy CLI import had errors (exit code ${IMPORT_EXIT_CODE})."
+  log_info "API-synced resources (guardian, attack protection, organizations) were still applied."
+  exit 1
+fi
