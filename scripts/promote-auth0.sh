@@ -158,7 +158,9 @@ cat > "${DEV_CONFIG}" <<EOF
     "guardianPolicies",
     "logStreams",
     "attackProtection",
-    "organizations"
+    "organizations",
+    "flows",
+    "flowVaultConnections"
   ]
 }
 EOF
