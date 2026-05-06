@@ -359,9 +359,14 @@ fi
 
 # --- Organizations ---
 log_info "Syncing Organizations..."
-ORGS=$(curl -s --request GET \
-  --url "https://${SANDBOX_AUTH0_DOMAIN}/api/v2/organizations" \
-  --header "authorization: Bearer ${SANDBOX_TOKEN}" | jq -c '.organizations // .[]? // empty' 2>/dev/null || echo "[]")
+ORGS_RAW=$(curl -s --request GET \
+  --url "https://${SANDBOX_AUTH0_DOMAIN}/api/v2/organizations?per_page=100" \
+  --header "authorization: Bearer ${SANDBOX_TOKEN}")
+
+# Auth0 API may return array directly or wrapped — handle both
+ORGS=$(echo "${ORGS_RAW}" | jq -c 'if type == "array" then . elif .organizations then .organizations else [] end' 2>/dev/null || echo "[]")
+
+log_info "Organizations found in Sandbox: $(echo "${ORGS}" | jq 'length')"
 
 if echo "${ORGS}" | jq -e '.[0]' >/dev/null 2>&1; then
   echo "${ORGS}" | jq -c '.[]' | while read -r org; do
@@ -382,7 +387,7 @@ if echo "${ORGS}" | jq -e '.[0]' >/dev/null 2>&1; then
         --header 'content-type: application/json' \
         --data "${CREATE_PAYLOAD}")
       if echo "${RESULT}" | jq -e '.id' >/dev/null 2>&1; then
-        echo "  ✓ Created organization '${ORG_NAME}'"
+        echo "  ✓ Created organization '${ORG_NAME}' (display: ${ORG_DISPLAY})"
       else
         echo "  ⚠ Failed to create organization '${ORG_NAME}': $(echo "${RESULT}" | jq -r '.message // .error // "unknown error"')"
       fi
