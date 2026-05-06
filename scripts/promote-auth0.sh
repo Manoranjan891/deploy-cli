@@ -81,12 +81,22 @@ cat > "${SANDBOX_CONFIG}" <<EOF
 }
 EOF
 
+log_info "Config file contents (secrets masked):"
+echo "  AUTH0_DOMAIN: ${SANDBOX_AUTH0_DOMAIN}"
+echo "  AUTH0_CLIENT_ID: ${SANDBOX_AUTH0_CLIENT_ID:0:8}..."
+echo "  Config path: ${SANDBOX_CONFIG}"
+
 log_info "Running: a0deploy export --format yaml --output_folder ${EXPORT_DIR}"
 
 a0deploy export \
   --format yaml \
   --output_folder "${EXPORT_DIR}" \
-  --config_file "${SANDBOX_CONFIG}"
+  --config_file "${SANDBOX_CONFIG}" || {
+    log_error "a0deploy export failed with exit code $?"
+    log_error "Listing export directory contents:"
+    ls -la "${EXPORT_DIR}" 2>/dev/null || echo "  (directory does not exist)"
+    exit 1
+  }
 
 # Verify export produced the tenant file
 if [ ! -f "${TENANT_FILE}" ]; then
