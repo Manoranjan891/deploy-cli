@@ -86,7 +86,8 @@ cat > "${SANDBOX_CONFIG}" <<EOF
     "guardianPhoneFactorSelectedProvider",
     "guardianPolicies",
     "logStreams",
-    "attackProtection"
+    "attackProtection",
+    "organizations"
   ]
 }
 EOF
@@ -156,7 +157,8 @@ cat > "${DEV_CONFIG}" <<EOF
     "guardianPhoneFactorSelectedProvider",
     "guardianPolicies",
     "logStreams",
-    "attackProtection"
+    "attackProtection",
+    "organizations"
   ]
 }
 EOF
