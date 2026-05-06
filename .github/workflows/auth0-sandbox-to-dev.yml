@@ -21,6 +21,7 @@ on:
       - main
     paths:
       - "auth0/**"
+      - "scripts/**"
       - ".github/workflows/**"
   workflow_dispatch:
 
