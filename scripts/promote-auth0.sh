@@ -55,6 +55,14 @@ check_env_var "DEV_AUTH0_CLIENT_SECRET"
 log_ok "All required environment variables are set."
 
 # -----------------------------------------------------------------------------
+# Cleanup function to remove temp config files (contains secrets)
+# -----------------------------------------------------------------------------
+cleanup() {
+  rm -f "${SANDBOX_CONFIG:-}" "${DEV_CONFIG:-}"
+}
+trap cleanup EXIT
+
+# -----------------------------------------------------------------------------
 # Step 1: Export from Sandbox
 # -----------------------------------------------------------------------------
 log_info "Exporting Auth0 config from Sandbox (${SANDBOX_AUTH0_DOMAIN})..."
@@ -63,16 +71,22 @@ log_info "Exporting Auth0 config from Sandbox (${SANDBOX_AUTH0_DOMAIN})..."
 rm -rf "${EXPORT_DIR}"
 mkdir -p "${EXPORT_DIR}"
 
-a0deploy export \
-  --format yaml \
-  --output_folder "${EXPORT_DIR}" \
-  --config_file /dev/stdin <<EOF
+# Write config to a temp file (a0deploy doesn't reliably read from stdin)
+SANDBOX_CONFIG=$(mktemp /tmp/auth0-sandbox-config.XXXXXX.json)
+cat > "${SANDBOX_CONFIG}" <<EOF
 {
   "AUTH0_DOMAIN": "${SANDBOX_AUTH0_DOMAIN}",
   "AUTH0_CLIENT_ID": "${SANDBOX_AUTH0_CLIENT_ID}",
   "AUTH0_CLIENT_SECRET": "${SANDBOX_AUTH0_CLIENT_SECRET}"
 }
 EOF
+
+log_info "Running: a0deploy export --format yaml --output_folder ${EXPORT_DIR}"
+
+a0deploy export \
+  --format yaml \
+  --output_folder "${EXPORT_DIR}" \
+  --config_file "${SANDBOX_CONFIG}"
 
 # Verify export produced the tenant file
 if [ ! -f "${TENANT_FILE}" ]; then
@@ -106,19 +120,9 @@ log_info "Importing Auth0 config into Dev (${DEV_AUTH0_DOMAIN})..."
 #   auth0/excluded.json file.
 # ─────────────────────────────────────────────────────────────────────────────
 
-IMPORT_ARGS=(
-  --format yaml
-  --input_file "${EXPORT_DIR}"
-  --config_file /dev/stdin
-)
-
-# Only add --env AUTH0_ALLOW_DELETE if explicitly enabled
-if [ "${AUTH0_ALLOW_DELETE}" = "true" ]; then
-  log_info "WARNING: Delete mode is ENABLED. Resources not in export will be removed from Dev."
-  IMPORT_ARGS+=(--env "AUTH0_ALLOW_DELETE=true")
-fi
-
-a0deploy import "${IMPORT_ARGS[@]}" <<EOF
+# Write Dev config to a temp file
+DEV_CONFIG=$(mktemp /tmp/auth0-dev-config.XXXXXX.json)
+cat > "${DEV_CONFIG}" <<EOF
 {
   "AUTH0_DOMAIN": "${DEV_AUTH0_DOMAIN}",
   "AUTH0_CLIENT_ID": "${DEV_AUTH0_CLIENT_ID}",
@@ -126,6 +130,21 @@ a0deploy import "${IMPORT_ARGS[@]}" <<EOF
   "AUTH0_ALLOW_DELETE": ${AUTH0_ALLOW_DELETE}
 }
 EOF
+
+IMPORT_ARGS=(
+  --format yaml
+  --input_file "${EXPORT_DIR}"
+  --config_file "${DEV_CONFIG}"
+)
+
+# Only add --env AUTH0_ALLOW_DELETE if explicitly enabled
+if [ "${AUTH0_ALLOW_DELETE}" = "true" ]; then
+  log_info "WARNING: Delete mode is ENABLED. Resources not in export will be removed from Dev."
+fi
+
+log_info "Running: a0deploy import --format yaml --input_file ${EXPORT_DIR}"
+
+a0deploy import "${IMPORT_ARGS[@]}"
 
 log_ok "Import completed successfully into Dev (${DEV_AUTH0_DOMAIN})."
 
