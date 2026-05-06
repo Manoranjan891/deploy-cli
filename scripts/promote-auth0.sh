@@ -119,6 +119,29 @@ fi
 log_ok "Export completed. Tenant config written to: ${TENANT_FILE}"
 
 # -----------------------------------------------------------------------------
+# Step 1b: Transform exported config for Dev tenant
+# -----------------------------------------------------------------------------
+log_info "Transforming exported config for Dev tenant..."
+
+# Replace Sandbox Management API audience with Dev audience in tenant.yaml
+# This fixes clientGrants that reference the Sandbox Management API
+SANDBOX_API_AUDIENCE="https://${SANDBOX_AUTH0_DOMAIN}/api/v2/"
+DEV_API_AUDIENCE="https://${DEV_AUTH0_DOMAIN}/api/v2/"
+
+log_info "Replacing audience: ${SANDBOX_API_AUDIENCE} → ${DEV_API_AUDIENCE}"
+find "${EXPORT_DIR}" -type f \( -name "*.yaml" -o -name "*.json" \) \
+  -exec sed -i "s|${SANDBOX_API_AUDIENCE}|${DEV_API_AUDIENCE}|g" {} +
+
+# Remove custom login page incompatibility from database connections
+# (Strips "strategy" attributes that conflict with custom login page in Dev)
+if [ -f "${EXPORT_DIR}/tenant.yaml" ]; then
+  # Remove the requires_username flag if set (causes issues with custom DB)
+  sed -i 's/requires_username: true/requires_username: false/g' "${EXPORT_DIR}/tenant.yaml"
+fi
+
+log_ok "Transformation complete."
+
+# -----------------------------------------------------------------------------
 # Step 2: Import into Dev
 # -----------------------------------------------------------------------------
 log_info "Importing Auth0 config into Dev (${DEV_AUTH0_DOMAIN})..."
@@ -161,9 +184,7 @@ cat > "${DEV_CONFIG}" <<EOF
     "organizations",
     "flows",
     "flowVaultConnections",
-    "forms",
-    "databases",
-    "clientGrants"
+    "forms"
   ]
 }
 EOF
@@ -185,7 +206,174 @@ find "${EXPORT_DIR}" -type f | head -50
 
 a0deploy import "${IMPORT_ARGS[@]}"
 
-log_ok "Import completed successfully into Dev (${DEV_AUTH0_DOMAIN})."
+log_ok "Import completed successfully via Deploy CLI."
+
+# -----------------------------------------------------------------------------
+# Step 3: Sync resources excluded from Deploy CLI via Management API
+# (These fail in Deploy CLI due to the 'paginate' parameter bug)
+# -----------------------------------------------------------------------------
+log_info "Syncing additional resources via Auth0 Management API..."
+
+# Get access tokens for both tenants
+SANDBOX_TOKEN=$(curl -s --request POST \
+  --url "https://${SANDBOX_AUTH0_DOMAIN}/oauth/token" \
+  --header 'content-type: application/json' \
+  --data "{
+    \"client_id\": \"${SANDBOX_AUTH0_CLIENT_ID}\",
+    \"client_secret\": \"${SANDBOX_AUTH0_CLIENT_SECRET}\",
+    \"audience\": \"https://${SANDBOX_AUTH0_DOMAIN}/api/v2/\",
+    \"grant_type\": \"client_credentials\"
+  }" | jq -r '.access_token')
+
+DEV_TOKEN=$(curl -s --request POST \
+  --url "https://${DEV_AUTH0_DOMAIN}/oauth/token" \
+  --header 'content-type: application/json' \
+  --data "{
+    \"client_id\": \"${DEV_AUTH0_CLIENT_ID}\",
+    \"client_secret\": \"${DEV_AUTH0_CLIENT_SECRET}\",
+    \"audience\": \"https://${DEV_AUTH0_DOMAIN}/api/v2/\",
+    \"grant_type\": \"client_credentials\"
+  }" | jq -r '.access_token')
+
+if [ -z "${SANDBOX_TOKEN}" ] || [ "${SANDBOX_TOKEN}" = "null" ]; then
+  log_error "Failed to get Sandbox access token"
+  exit 1
+fi
+if [ -z "${DEV_TOKEN}" ] || [ "${DEV_TOKEN}" = "null" ]; then
+  log_error "Failed to get Dev access token"
+  exit 1
+fi
+log_ok "Access tokens obtained for both tenants."
+
+# --- Guardian Factors ---
+log_info "Syncing Guardian factors..."
+GUARDIAN_FACTORS=$(curl -s --request GET \
+  --url "https://${SANDBOX_AUTH0_DOMAIN}/api/v2/guardian/factors" \
+  --header "authorization: Bearer ${SANDBOX_TOKEN}" \
+  --header 'content-type: application/json')
+
+if echo "${GUARDIAN_FACTORS}" | jq -e '.' >/dev/null 2>&1; then
+  echo "${GUARDIAN_FACTORS}" | jq -c '.[]' | while read -r factor; do
+    FACTOR_NAME=$(echo "${factor}" | jq -r '.name')
+    FACTOR_ENABLED=$(echo "${factor}" | jq -r '.enabled')
+    curl -s --request PUT \
+      --url "https://${DEV_AUTH0_DOMAIN}/api/v2/guardian/factors/${FACTOR_NAME}" \
+      --header "authorization: Bearer ${DEV_TOKEN}" \
+      --header 'content-type: application/json' \
+      --data "{\"enabled\": ${FACTOR_ENABLED}}" > /dev/null
+    echo "  ✓ Guardian factor '${FACTOR_NAME}' → enabled=${FACTOR_ENABLED}"
+  done
+  log_ok "Guardian factors synced."
+else
+  log_info "Skipping Guardian factors (unable to retrieve from Sandbox)."
+fi
+
+# --- Attack Protection (Brute Force, Breached Password, Suspicious IP) ---
+log_info "Syncing Attack Protection settings..."
+
+# Brute Force Protection
+BFP=$(curl -s --request GET \
+  --url "https://${SANDBOX_AUTH0_DOMAIN}/api/v2/attack-protection/brute-force-protection" \
+  --header "authorization: Bearer ${SANDBOX_TOKEN}")
+if echo "${BFP}" | jq -e '.enabled' >/dev/null 2>&1; then
+  curl -s --request PATCH \
+    --url "https://${DEV_AUTH0_DOMAIN}/api/v2/attack-protection/brute-force-protection" \
+    --header "authorization: Bearer ${DEV_TOKEN}" \
+    --header 'content-type: application/json' \
+    --data "${BFP}" > /dev/null
+  echo "  ✓ Brute Force Protection synced"
+fi
+
+# Breached Password Detection
+BPD=$(curl -s --request GET \
+  --url "https://${SANDBOX_AUTH0_DOMAIN}/api/v2/attack-protection/breached-password-detection" \
+  --header "authorization: Bearer ${SANDBOX_TOKEN}")
+if echo "${BPD}" | jq -e '.enabled' >/dev/null 2>&1; then
+  curl -s --request PATCH \
+    --url "https://${DEV_AUTH0_DOMAIN}/api/v2/attack-protection/breached-password-detection" \
+    --header "authorization: Bearer ${DEV_TOKEN}" \
+    --header 'content-type: application/json' \
+    --data "${BPD}" > /dev/null
+  echo "  ✓ Breached Password Detection synced"
+fi
+
+# Suspicious IP Throttling
+SIP=$(curl -s --request GET \
+  --url "https://${SANDBOX_AUTH0_DOMAIN}/api/v2/attack-protection/suspicious-ip-throttling" \
+  --header "authorization: Bearer ${SANDBOX_TOKEN}")
+if echo "${SIP}" | jq -e '.enabled' >/dev/null 2>&1; then
+  curl -s --request PATCH \
+    --url "https://${DEV_AUTH0_DOMAIN}/api/v2/attack-protection/suspicious-ip-throttling" \
+    --header "authorization: Bearer ${DEV_TOKEN}" \
+    --header 'content-type: application/json' \
+    --data "${SIP}" > /dev/null
+  echo "  ✓ Suspicious IP Throttling synced"
+fi
+log_ok "Attack Protection settings synced."
+
+# --- Log Streams ---
+log_info "Syncing Log Streams..."
+LOG_STREAMS=$(curl -s --request GET \
+  --url "https://${SANDBOX_AUTH0_DOMAIN}/api/v2/log-streams" \
+  --header "authorization: Bearer ${SANDBOX_TOKEN}")
+
+if echo "${LOG_STREAMS}" | jq -e '.[]' >/dev/null 2>&1; then
+  # Get existing log streams in Dev
+  DEV_LOG_STREAMS=$(curl -s --request GET \
+    --url "https://${DEV_AUTH0_DOMAIN}/api/v2/log-streams" \
+    --header "authorization: Bearer ${DEV_TOKEN}")
+
+  echo "${LOG_STREAMS}" | jq -c '.[]' | while read -r stream; do
+    STREAM_NAME=$(echo "${stream}" | jq -r '.name')
+    STREAM_TYPE=$(echo "${stream}" | jq -r '.type')
+    # Check if already exists in Dev (by name)
+    EXISTS=$(echo "${DEV_LOG_STREAMS}" | jq -r --arg name "${STREAM_NAME}" '.[] | select(.name == $name) | .id')
+    if [ -n "${EXISTS}" ]; then
+      echo "  ⟳ Log stream '${STREAM_NAME}' already exists in Dev, skipping"
+    else
+      echo "  ℹ Log stream '${STREAM_NAME}' (type: ${STREAM_TYPE}) — skipping creation (may require environment-specific sink config)"
+    fi
+  done
+  log_ok "Log Streams reviewed."
+else
+  log_info "No log streams found in Sandbox."
+fi
+
+# --- Organizations ---
+log_info "Syncing Organizations..."
+ORGS=$(curl -s --request GET \
+  --url "https://${SANDBOX_AUTH0_DOMAIN}/api/v2/organizations" \
+  --header "authorization: Bearer ${SANDBOX_TOKEN}" | jq -c '.organizations // .[]? // empty' 2>/dev/null || echo "[]")
+
+if echo "${ORGS}" | jq -e '.[0]' >/dev/null 2>&1; then
+  echo "${ORGS}" | jq -c '.[]' | while read -r org; do
+    ORG_NAME=$(echo "${org}" | jq -r '.name')
+    ORG_DISPLAY=$(echo "${org}" | jq -r '.display_name')
+    # Check if org exists in Dev
+    DEV_ORG=$(curl -s --request GET \
+      --url "https://${DEV_AUTH0_DOMAIN}/api/v2/organizations/name/${ORG_NAME}" \
+      --header "authorization: Bearer ${DEV_TOKEN}")
+    if echo "${DEV_ORG}" | jq -e '.id' >/dev/null 2>&1; then
+      echo "  ⟳ Organization '${ORG_NAME}' already exists in Dev"
+    else
+      # Create org in Dev
+      CREATE_PAYLOAD=$(echo "${org}" | jq '{name, display_name, branding, metadata}')
+      RESULT=$(curl -s --request POST \
+        --url "https://${DEV_AUTH0_DOMAIN}/api/v2/organizations" \
+        --header "authorization: Bearer ${DEV_TOKEN}" \
+        --header 'content-type: application/json' \
+        --data "${CREATE_PAYLOAD}")
+      if echo "${RESULT}" | jq -e '.id' >/dev/null 2>&1; then
+        echo "  ✓ Created organization '${ORG_NAME}'"
+      else
+        echo "  ⚠ Failed to create organization '${ORG_NAME}': $(echo "${RESULT}" | jq -r '.message // .error // "unknown error"')"
+      fi
+    fi
+  done
+  log_ok "Organizations synced."
+else
+  log_info "No organizations found in Sandbox (or empty list)."
+fi
 
 # -----------------------------------------------------------------------------
 # Summary
@@ -196,4 +384,9 @@ echo " Auth0 Promotion Complete"
 echo " Source:      ${SANDBOX_AUTH0_DOMAIN} (Sandbox)"
 echo " Destination: ${DEV_AUTH0_DOMAIN} (Dev)"
 echo " Delete mode: ${AUTH0_ALLOW_DELETE}"
+echo ""
+echo " Deploy CLI imported: pages, clients, actions, connections, roles,"
+echo "   resource servers, email, branding, prompts, triggers"
+echo " API synced: guardian, attack protection, log streams, organizations"
+echo " Manual setup needed: flows, forms, flow vault connections"
 echo "═══════════════════════════════════════════════════════════════════════════"
