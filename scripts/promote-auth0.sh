@@ -265,6 +265,7 @@ if echo "${GUARDIAN_FACTORS}" | jq -e '.' >/dev/null 2>&1; then
       --header "authorization: Bearer ${DEV_TOKEN}" \
       --header 'content-type: application/json' \
       --data "{\"enabled\": ${FACTOR_ENABLED}}" > /dev/null
+    sleep 1  # Rate limit protection
     echo "  ✓ Guardian factor '${FACTOR_NAME}' → enabled=${FACTOR_ENABLED}"
   done
   log_ok "Guardian factors synced."
@@ -375,17 +376,19 @@ else
       DEV_ORG=$(curl -s --request GET \
         --url "https://${DEV_AUTH0_DOMAIN}/api/v2/organizations/name/${ORG_NAME}" \
         --header "authorization: Bearer ${DEV_TOKEN}")
+      sleep 1  # Rate limit protection
       if echo "${DEV_ORG}" | jq -e '.id' >/dev/null 2>&1; then
         echo "  ⟳ Organization '${ORG_NAME}' already exists in Dev"
       else
-        # Create org in Dev
-        CREATE_PAYLOAD=$(echo "${org}" | jq '{name, display_name, branding, metadata}')
+        # Create org in Dev — remove null fields (Auth0 rejects null for branding/metadata)
+        CREATE_PAYLOAD=$(echo "${org}" | jq '{name, display_name} + (if .branding != null then {branding} else {} end) + (if .metadata != null then {metadata} else {} end)')
         log_info "  Creating with payload: ${CREATE_PAYLOAD}"
         RESULT=$(curl -s --request POST \
           --url "https://${DEV_AUTH0_DOMAIN}/api/v2/organizations" \
           --header "authorization: Bearer ${DEV_TOKEN}" \
           --header 'content-type: application/json' \
           --data "${CREATE_PAYLOAD}")
+        sleep 2  # Rate limit protection
         if echo "${RESULT}" | jq -e '.id' >/dev/null 2>&1; then
           echo "  ✓ Created organization '${ORG_NAME}' (display: ${ORG_DISPLAY})"
         else
@@ -433,8 +436,6 @@ if [ "${VAULT_HTTP}" = "200" ]; then
       CONN_ID=$(echo "${conn}" | jq -r '.id')
       CONN_NAME=$(echo "${conn}" | jq -r '.name')
       CONN_APP_ID=$(echo "${conn}" | jq -r '.app_id // empty')
-      CONN_ENVIRONMENT=$(echo "${conn}" | jq -r '.environment // "production"')
-      CONN_SETUP=$(echo "${conn}" | jq -r '.setup_type // empty')
 
       # Check if exists in Dev by name
       DEV_CONN_ID=$(echo "${DEV_VAULT_CONNS}" | jq -r --arg name "${CONN_NAME}" '.[] | select(.name == $name) | .id')
@@ -444,13 +445,20 @@ if [ "${VAULT_HTTP}" = "200" ]; then
         # Add to mapping
         echo "$(cat "${VAULT_MAP_FILE}")" | jq --arg sid "${CONN_ID}" --arg did "${DEV_CONN_ID}" '. + {($sid): $did}' > "${VAULT_MAP_FILE}"
       else
-        # Create in Dev — secrets will be empty/placeholder
-        CREATE_VC_PAYLOAD=$(echo "${conn}" | jq 'del(.id, .created_at, .updated_at, .fingerprint)')
+        # Create in Dev — only send fields valid for creation
+        # Strip all read-only/computed fields; keep only: name, app_id, setup
+        CREATE_VC_PAYLOAD=$(echo "${conn}" | jq '{
+          name,
+          app_id,
+          setup: (if .setup != null then .setup else {} end)
+        } | with_entries(select(.value != null and .value != ""))')
+        log_info "  Creating vault connection '${CONN_NAME}' with payload: $(echo "${CREATE_VC_PAYLOAD}" | jq -c '.')"
         RESULT=$(curl -s --request POST \
           --url "https://${DEV_AUTH0_DOMAIN}/api/v2/flows/vault/connections" \
           --header "authorization: Bearer ${DEV_TOKEN}" \
           --header 'content-type: application/json' \
           --data "${CREATE_VC_PAYLOAD}")
+        sleep 2  # Rate limit protection
         NEW_ID=$(echo "${RESULT}" | jq -r '.id // empty')
         if [ -n "${NEW_ID}" ]; then
           echo "  ✓ Created vault connection '${CONN_NAME}' in Dev (id: ${NEW_ID})"
@@ -500,6 +508,7 @@ if [ "${FLOWS_HTTP}" = "200" ]; then
       FLOW_NAME=$(echo "${flow}" | jq -r '.name')
 
       log_info "Processing flow: '${FLOW_NAME}' (id: ${FLOW_ID})"
+      sleep 1  # Rate limit protection
 
       # Get full flow definition (with DAG/nodes)
       FLOW_DETAIL=$(curl -s --request GET \
@@ -508,6 +517,13 @@ if [ "${FLOWS_HTTP}" = "200" ]; then
 
       # Remap vault connection IDs in the flow definition
       FLOW_DEF=$(echo "${FLOW_DETAIL}" | jq 'del(.id, .created_at, .updated_at, .executed_at)')
+
+      # Check if actions is null or missing — skip if empty flow
+      ACTIONS_CHECK=$(echo "${FLOW_DEF}" | jq '.actions')
+      if [ "${ACTIONS_CHECK}" = "null" ] || [ -z "${ACTIONS_CHECK}" ]; then
+        echo "  ⟳ Flow '${FLOW_NAME}' has no actions, creating with empty actions array"
+        FLOW_DEF=$(echo "${FLOW_DEF}" | jq '.actions = []')
+      fi
 
       # Replace Sandbox vault connection IDs with Dev IDs
       VAULT_MAP=$(cat "${VAULT_MAP_FILE}")
@@ -527,6 +543,7 @@ if [ "${FLOWS_HTTP}" = "200" ]; then
           --header "authorization: Bearer ${DEV_TOKEN}" \
           --header 'content-type: application/json' \
           --data "${UPDATE_PAYLOAD}")
+        sleep 2  # Rate limit protection
         if echo "${RESULT}" | jq -e '.id' >/dev/null 2>&1; then
           echo "  ✓ Updated flow '${FLOW_NAME}' in Dev"
           echo "$(cat "${FLOW_MAP_FILE}")" | jq --arg sid "${FLOW_ID}" --arg did "${DEV_FLOW_ID}" '. + {($sid): $did}' > "${FLOW_MAP_FILE}"
@@ -541,6 +558,7 @@ if [ "${FLOWS_HTTP}" = "200" ]; then
           --header "authorization: Bearer ${DEV_TOKEN}" \
           --header 'content-type: application/json' \
           --data "${CREATE_PAYLOAD}")
+        sleep 2  # Rate limit protection
         NEW_FLOW_ID=$(echo "${RESULT}" | jq -r '.id // empty')
         if [ -n "${NEW_FLOW_ID}" ]; then
           echo "  ✓ Created flow '${FLOW_NAME}' in Dev (id: ${NEW_FLOW_ID})"
@@ -585,6 +603,7 @@ if [ "${FORMS_HTTP}" = "200" ]; then
       FORM_NAME=$(echo "${form}" | jq -r '.name')
 
       log_info "Processing form: '${FORM_NAME}' (id: ${FORM_ID})"
+      sleep 1  # Rate limit protection
 
       # Get full form definition
       FORM_DETAIL=$(curl -s --request GET \
@@ -619,6 +638,7 @@ if [ "${FORMS_HTTP}" = "200" ]; then
           --header "authorization: Bearer ${DEV_TOKEN}" \
           --header 'content-type: application/json' \
           --data "${UPDATE_PAYLOAD}")
+        sleep 2  # Rate limit protection
         if echo "${RESULT}" | jq -e '.id' >/dev/null 2>&1; then
           echo "  ✓ Updated form '${FORM_NAME}' in Dev"
         else
@@ -631,6 +651,7 @@ if [ "${FORMS_HTTP}" = "200" ]; then
           --header "authorization: Bearer ${DEV_TOKEN}" \
           --header 'content-type: application/json' \
           --data "${FORM_DEF}")
+        sleep 2  # Rate limit protection
         if echo "${RESULT}" | jq -e '.id' >/dev/null 2>&1; then
           echo "  ✓ Created form '${FORM_NAME}' in Dev"
         else
