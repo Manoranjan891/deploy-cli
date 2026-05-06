@@ -20,10 +20,10 @@ set -euo pipefail
 EXPORT_DIR="auth0/exported"
 TENANT_FILE="${EXPORT_DIR}/tenant.yaml"
 
-# NOTE: Auth0 Deploy CLI delete mode is DISABLED by default.
-# Setting AUTH0_ALLOW_DELETE=true would remove resources in Dev that don't exist
-# in the exported config. Only enable this if you fully understand the impact.
-AUTH0_ALLOW_DELETE="${AUTH0_ALLOW_DELETE:-false}"
+# Auth0 Deploy CLI delete mode — ENABLED
+# Resources in Dev that don't exist in Sandbox export WILL be removed.
+# This ensures Dev is an exact mirror of Sandbox.
+AUTH0_ALLOW_DELETE="${AUTH0_ALLOW_DELETE:-true}"
 
 # -----------------------------------------------------------------------------
 # Helper functions
