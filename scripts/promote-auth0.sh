@@ -161,7 +161,8 @@ cat > "${DEV_CONFIG}" <<EOF
     "organizations",
     "flows",
     "flowVaultConnections",
-    "forms"
+    "forms",
+    "databases"
   ]
 }
 EOF
