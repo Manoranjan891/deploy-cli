@@ -79,8 +79,12 @@ cat > "${SANDBOX_CONFIG}" <<EOF
   "AUTH0_CLIENT_ID": "${SANDBOX_AUTH0_CLIENT_ID}",
   "AUTH0_CLIENT_SECRET": "${SANDBOX_AUTH0_CLIENT_SECRET}",
   "AUTH0_EXCLUDED": [
+    "guardianFactors",
+    "guardianFactorProviders",
+    "guardianFactorTemplates",
     "guardianPhoneFactorMessageTypes",
-    "guardianPhoneFactorSelectedProvider"
+    "guardianPhoneFactorSelectedProvider",
+    "guardianPolicies"
   ]
 }
 EOF
@@ -143,8 +147,12 @@ cat > "${DEV_CONFIG}" <<EOF
   "AUTH0_CLIENT_SECRET": "${DEV_AUTH0_CLIENT_SECRET}",
   "AUTH0_ALLOW_DELETE": ${AUTH0_ALLOW_DELETE},
   "AUTH0_EXCLUDED": [
+    "guardianFactors",
+    "guardianFactorProviders",
+    "guardianFactorTemplates",
     "guardianPhoneFactorMessageTypes",
-    "guardianPhoneFactorSelectedProvider"
+    "guardianPhoneFactorSelectedProvider",
+    "guardianPolicies"
   ]
 }
 EOF
