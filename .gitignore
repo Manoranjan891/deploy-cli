@@ -1,0 +1,13 @@
+# Generated at runtime - do not commit
+auth0/exported/
+
+# Node
+node_modules/
+
+# Environment files
+.env
+.env.*
+
+# OS files
+.DS_Store
+Thumbs.db

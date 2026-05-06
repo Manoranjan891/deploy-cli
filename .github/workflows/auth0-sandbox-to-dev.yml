@@ -1,0 +1,114 @@
+# =============================================================================
+# GitHub Actions Workflow: Promote Auth0 Config from Sandbox → Dev
+# =============================================================================
+# Exports configuration from the Sandbox tenant using Auth0 Deploy CLI,
+# then imports it into the Dev tenant.
+#
+# Required GitHub Secrets:
+#   SANDBOX_AUTH0_DOMAIN          - e.g. my-sandbox.us.auth0.com
+#   SANDBOX_AUTH0_CLIENT_ID       - Machine-to-Machine app Client ID (Sandbox)
+#   SANDBOX_AUTH0_CLIENT_SECRET   - Machine-to-Machine app Client Secret (Sandbox)
+#   DEV_AUTH0_DOMAIN              - e.g. my-dev.us.auth0.com
+#   DEV_AUTH0_CLIENT_ID           - Machine-to-Machine app Client ID (Dev)
+#   DEV_AUTH0_CLIENT_SECRET       - Machine-to-Machine app Client Secret (Dev)
+# =============================================================================
+
+name: Auth0 Promote Sandbox → Dev
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "auth0/**"
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "20"
+  DEPLOY_CLI_VERSION: "7"   # Major version of auth0-deploy-cli
+
+jobs:
+  promote:
+    name: Export Sandbox → Import Dev
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      # -----------------------------------------------------------------------
+      # 1. Checkout repository
+      # -----------------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # -----------------------------------------------------------------------
+      # 2. Setup Node.js
+      # -----------------------------------------------------------------------
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # -----------------------------------------------------------------------
+      # 3. Install Auth0 Deploy CLI
+      # -----------------------------------------------------------------------
+      - name: Install Auth0 Deploy CLI
+        run: |
+          npm install -g auth0-deploy-cli@${{ env.DEPLOY_CLI_VERSION }}
+          a0deploy --version
+
+      # -----------------------------------------------------------------------
+      # 4. Validate required files exist
+      # -----------------------------------------------------------------------
+      - name: Validate required files
+        run: |
+          echo "::group::Checking required files"
+          REQUIRED_FILES=(
+            "scripts/promote-auth0.sh"
+          )
+          MISSING=0
+          for f in "${REQUIRED_FILES[@]}"; do
+            if [ ! -f "$f" ]; then
+              echo "::error::Missing required file: $f"
+              MISSING=1
+            else
+              echo "✓ Found: $f"
+            fi
+          done
+          if [ "$MISSING" -eq 1 ]; then
+            exit 1
+          fi
+          echo "::endgroup::"
+
+      # -----------------------------------------------------------------------
+      # 5. Make scripts executable
+      # -----------------------------------------------------------------------
+      - name: Make scripts executable
+        run: chmod +x scripts/promote-auth0.sh
+
+      # -----------------------------------------------------------------------
+      # 6. Run promotion (Export Sandbox → Import Dev)
+      # -----------------------------------------------------------------------
+      - name: Promote Auth0 config (Sandbox → Dev)
+        env:
+          SANDBOX_AUTH0_DOMAIN: ${{ secrets.SANDBOX_AUTH0_DOMAIN }}
+          SANDBOX_AUTH0_CLIENT_ID: ${{ secrets.SANDBOX_AUTH0_CLIENT_ID }}
+          SANDBOX_AUTH0_CLIENT_SECRET: ${{ secrets.SANDBOX_AUTH0_CLIENT_SECRET }}
+          DEV_AUTH0_DOMAIN: ${{ secrets.DEV_AUTH0_DOMAIN }}
+          DEV_AUTH0_CLIENT_ID: ${{ secrets.DEV_AUTH0_CLIENT_ID }}
+          DEV_AUTH0_CLIENT_SECRET: ${{ secrets.DEV_AUTH0_CLIENT_SECRET }}
+        run: ./scripts/promote-auth0.sh
+
+      # -----------------------------------------------------------------------
+      # 7. Upload exported config as artifact (for audit/debugging)
+      # -----------------------------------------------------------------------
+      - name: Upload exported config artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: auth0-exported-config
+          path: auth0/exported/
+          retention-days: 14
