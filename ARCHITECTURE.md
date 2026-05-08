@@ -1,4 +1,4 @@
-# Architecture: Auth0 Sandbox → Dev Promotion Pipeline
+# Architecture: Auth0 Lower Region → Upper Region Promotion Pipeline
 
 ## High-Level Flow
 
@@ -12,10 +12,10 @@
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│  STEP 1: EXPORT FROM SANDBOX                                                │
+│  STEP 1: EXPORT from Lower Region                                                │
 │                                                                             │
 │  ┌──────────────┐     a0deploy export      ┌─────────────────────────┐     │
-│  │   Sandbox    │ ──────────────────────── │  auth0/exported/        │     │
+│  │   Lower Region    │ ──────────────────────── │  auth0/exported/        │     │
 │  │   Tenant     │   (Auth0 Deploy CLI)     │  ├── tenant.yaml        │     │
 │  │              │                          │  ├── actions/            │     │
 │  │  Domain:     │   Uses M2M credentials   │  ├── clients/           │     │
@@ -32,18 +32,17 @@
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  STEP 2: TRANSFORM                                                          │
 │                                                                             │
-│  • Replace Sandbox API audience URL → Dev API audience URL                  │
-│  • Remove Contoso-Users database (incompatible)                             │
+│  • Replace Lower Region API audience URL → Upper Region API audience URL                  │
 │  • Strip incompatible tenant flags                                          │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│  STEP 3: IMPORT INTO DEV (Deploy CLI)                                       │
+│  STEP 3: IMPORT into Upper Region (Deploy CLI)                                       │
 │                                                                             │
 │  ┌─────────────────────────┐    a0deploy import    ┌──────────────┐        │
-│  │  auth0/exported/        │ ─────────────────── │    Dev       │        │
+│  │  auth0/exported/        │ ─────────────────── │    Upper Region       │        │
 │  │  tenant.yaml            │  (Auth0 Deploy CLI)  │    Tenant    │        │
 │  └─────────────────────────┘                      │              │        │
 │                                                   │  Creates/    │        │
@@ -53,7 +52,7 @@
 │  ✅ Resource Servers (APIs)                       │  - APIs      │        │
 │  ✅ Connections                                   │  - Roles     │        │
 │  ✅ Client Grants                                 │  - etc.      │        │
-│  ✅ Databases (except Contoso-Users)              └──────────────┘        │
+│  ✅ Databases                                     └──────────────┘        │
 │  ✅ Pages (login, password reset)                                          │
 │  ✅ Email Provider + Templates                                             │
 │  ✅ Roles                                                                  │
@@ -72,7 +71,7 @@
 │  Bypasses Deploy CLI's broken 'paginate' parameter                          │
 │                                                                             │
 │  ┌────────────────┐  curl GET   ┌────────────────┐  curl PUT/POST          │
-│  │    Sandbox     │ ──────────> │   Transform    │ ──────────────>  Dev    │
+│  │    Lower Region     │ ──────────> │   Transform    │ ──────────────>  Upper Region    │
 │  │    API v2      │             │   & Compare    │                          │
 │  └────────────────┘             └────────────────┘                          │
 │                                                                             │
@@ -99,7 +98,7 @@
 deploy-cli/
 ├── .github/
 │   └── workflows/
-│       └── auth0-sandbox-to-dev.yml   ← GitHub Actions workflow definition
+│       └── auth0-lower-region-to-upper-region.yml   ← GitHub Actions workflow definition
 ├── auth0/
 │   ├── exported/                      ← Generated at runtime (git-ignored)
 │   └── README.md                      ← Setup documentation
@@ -115,25 +114,25 @@ deploy-cli/
 ┌─────────────────────────────────────────────────────────────────┐
 │              GitHub Repository Secrets                           │
 ├─────────────────────────────────┬───────────────────────────────┤
-│  SANDBOX_AUTH0_DOMAIN           │  Sandbox tenant domain        │
-│  SANDBOX_AUTH0_CLIENT_ID        │  Sandbox M2M app Client ID    │
-│  SANDBOX_AUTH0_CLIENT_SECRET    │  Sandbox M2M app Secret       │
+│  LOWER_REGION_AUTH0_DOMAIN           │  Lower Region tenant domain        │
+│  LOWER_REGION_AUTH0_CLIENT_ID        │  Lower Region M2M app Client ID    │
+│  LOWER_REGION_AUTH0_CLIENT_SECRET    │  Lower Region M2M app Secret       │
 ├─────────────────────────────────┼───────────────────────────────┤
-│  DEV_AUTH0_DOMAIN               │  Dev tenant domain            │
-│  DEV_AUTH0_CLIENT_ID            │  Dev M2M app Client ID        │
-│  DEV_AUTH0_CLIENT_SECRET        │  Dev M2M app Secret           │
+│  UPPER_REGION_AUTH0_DOMAIN               │  Upper Region tenant domain            │
+│  UPPER_REGION_AUTH0_CLIENT_ID            │  Upper Region M2M app Client ID        │
+│  UPPER_REGION_AUTH0_CLIENT_SECRET        │  Upper Region M2M app Secret           │
 └─────────────────────────────────┴───────────────────────────────┘
 
 
 ## Auth0 M2M App Permissions
 
 ┌───────────────────────────────────────────────────────────────────┐
-│  SANDBOX M2M App (read-only)                                      │
+│  Lower Region M2M App (read-only)                                      │
 │  Scopes: read:clients, read:connections, read:roles,              │
 │          read:actions, read:organizations, read:resource_servers,  │
 │          read:client_grants, read:tenant_settings, ...            │
 ├───────────────────────────────────────────────────────────────────┤
-│  DEV M2M App (read + write)                                       │
+│  Upper Region M2M App (read + write)                                       │
 │  Scopes: read:*, create:*, update:*                               │
 │          (All Management API scopes recommended)                  │
 └───────────────────────────────────────────────────────────────────┘
@@ -147,7 +146,6 @@ deploy-cli/
 │  Flow Vault Connections │  Hold secrets Auth0 never exports             │
 │  Flows                  │  Depend on vault connections                  │
 │  Forms                  │  Depend on flows                              │
-│  Contoso-Users DB       │  Incompatible with Custom Login Page in Dev   │
 │  Users                  │  Runtime data, not configuration              │
 │  Log Stream Sinks       │  Endpoints differ per environment             │
 └─────────────────────────┴───────────────────────────────────────────────┘

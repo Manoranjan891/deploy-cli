@@ -1,19 +1,19 @@
 # =============================================================================
-# GitHub Actions Workflow: Promote Auth0 Config from Sandbox → Dev
+# GitHub Actions Workflow: Promote Auth0 Config from Lower Region → Upper Region
 # =============================================================================
-# Exports configuration from the Sandbox tenant using Auth0 Deploy CLI,
-# then imports it into the Dev tenant.
+# Exports configuration from the Lower Region tenant using Auth0 Deploy CLI,
+# then imports it into the Upper Region tenant.
 #
 # Required GitHub Secrets:
-#   SANDBOX_AUTH0_DOMAIN          - e.g. my-sandbox.us.auth0.com
-#   SANDBOX_AUTH0_CLIENT_ID       - Machine-to-Machine app Client ID (Sandbox)
-#   SANDBOX_AUTH0_CLIENT_SECRET   - Machine-to-Machine app Client Secret (Sandbox)
-#   DEV_AUTH0_DOMAIN              - e.g. my-dev.us.auth0.com
-#   DEV_AUTH0_CLIENT_ID           - Machine-to-Machine app Client ID (Dev)
-#   DEV_AUTH0_CLIENT_SECRET       - Machine-to-Machine app Client Secret (Dev)
+#   LOWER_REGION_AUTH0_DOMAIN          - e.g. my-lower-region.us.auth0.com
+#   LOWER_REGION_AUTH0_CLIENT_ID       - Machine-to-Machine app Client ID (Lower Region)
+#   LOWER_REGION_AUTH0_CLIENT_SECRET   - Machine-to-Machine app Client Secret (Lower Region)
+#   UPPER_REGION_AUTH0_DOMAIN              - e.g. my-upper-region.us.auth0.com
+#   UPPER_REGION_AUTH0_CLIENT_ID           - Machine-to-Machine app Client ID (Upper Region)
+#   UPPER_REGION_AUTH0_CLIENT_SECRET       - Machine-to-Machine app Client Secret (Upper Region)
 # =============================================================================
 
-name: Auth0 Promote Sandbox → Dev
+name: Auth0 Promote Lower Region → Upper Region
 
 on:
   push:
@@ -34,7 +34,7 @@ env:
 
 jobs:
   promote:
-    name: Export Sandbox → Import Dev
+    name: Export Lower Region → Import Upper Region
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
@@ -91,16 +91,16 @@ jobs:
         run: chmod +x scripts/promote-auth0.sh
 
       # -----------------------------------------------------------------------
-      # 6. Run promotion (Export Sandbox → Import Dev)
+      # 6. Run promotion (Export Lower Region → Import Upper Region)
       # -----------------------------------------------------------------------
-      - name: Promote Auth0 config (Sandbox → Dev)
+      - name: Promote Auth0 config (Lower Region → Upper Region)
         env:
-          SANDBOX_AUTH0_DOMAIN: ${{ secrets.SANDBOX_AUTH0_DOMAIN }}
-          SANDBOX_AUTH0_CLIENT_ID: ${{ secrets.SANDBOX_AUTH0_CLIENT_ID }}
-          SANDBOX_AUTH0_CLIENT_SECRET: ${{ secrets.SANDBOX_AUTH0_CLIENT_SECRET }}
-          DEV_AUTH0_DOMAIN: ${{ secrets.DEV_AUTH0_DOMAIN }}
-          DEV_AUTH0_CLIENT_ID: ${{ secrets.DEV_AUTH0_CLIENT_ID }}
-          DEV_AUTH0_CLIENT_SECRET: ${{ secrets.DEV_AUTH0_CLIENT_SECRET }}
+          LOWER_REGION_AUTH0_DOMAIN: ${{ secrets.LOWER_REGION_AUTH0_DOMAIN }}
+          LOWER_REGION_AUTH0_CLIENT_ID: ${{ secrets.LOWER_REGION_AUTH0_CLIENT_ID }}
+          LOWER_REGION_AUTH0_CLIENT_SECRET: ${{ secrets.LOWER_REGION_AUTH0_CLIENT_SECRET }}
+          UPPER_REGION_AUTH0_DOMAIN: ${{ secrets.UPPER_REGION_AUTH0_DOMAIN }}
+          UPPER_REGION_AUTH0_CLIENT_ID: ${{ secrets.UPPER_REGION_AUTH0_CLIENT_ID }}
+          UPPER_REGION_AUTH0_CLIENT_SECRET: ${{ secrets.UPPER_REGION_AUTH0_CLIENT_SECRET }}
         run: ./scripts/promote-auth0.sh
 
       # -----------------------------------------------------------------------

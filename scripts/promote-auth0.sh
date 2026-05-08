@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # =============================================================================
 # promote-auth0.sh
-# Exports Auth0 configuration from Sandbox and imports it into Dev.
+# Exports Auth0 configuration from Lower Region and imports it into Upper Region.
 # Designed to run inside GitHub Actions or locally for testing.
 #
 # Required environment variables:
-#   SANDBOX_AUTH0_DOMAIN
-#   SANDBOX_AUTH0_CLIENT_ID
-#   SANDBOX_AUTH0_CLIENT_SECRET
-#   DEV_AUTH0_DOMAIN
-#   DEV_AUTH0_CLIENT_ID
-#   DEV_AUTH0_CLIENT_SECRET
+#   LOWER_REGION_AUTH0_DOMAIN
+#   LOWER_REGION_AUTH0_CLIENT_ID
+#   LOWER_REGION_AUTH0_CLIENT_SECRET
+#   UPPER_REGION_AUTH0_DOMAIN
+#   UPPER_REGION_AUTH0_CLIENT_ID
+#   UPPER_REGION_AUTH0_CLIENT_SECRET
 # =============================================================================
 set -euo pipefail
 
@@ -21,8 +21,8 @@ EXPORT_DIR="auth0/exported"
 TENANT_FILE="${EXPORT_DIR}/tenant.yaml"
 
 # Auth0 Deploy CLI delete mode — ENABLED
-# Resources in Dev that don't exist in Sandbox export WILL be removed.
-# This ensures Dev is an exact mirror of Sandbox.
+# Resources in Upper Region that don't exist in Lower Region export WILL be removed.
+# This ensures Upper Region is an exact mirror of Lower Region.
 AUTH0_ALLOW_DELETE="${AUTH0_ALLOW_DELETE:-true}"
 
 # -----------------------------------------------------------------------------
@@ -45,12 +45,12 @@ check_env_var() {
 # -----------------------------------------------------------------------------
 log_info "Validating required environment variables..."
 
-check_env_var "SANDBOX_AUTH0_DOMAIN"
-check_env_var "SANDBOX_AUTH0_CLIENT_ID"
-check_env_var "SANDBOX_AUTH0_CLIENT_SECRET"
-check_env_var "DEV_AUTH0_DOMAIN"
-check_env_var "DEV_AUTH0_CLIENT_ID"
-check_env_var "DEV_AUTH0_CLIENT_SECRET"
+check_env_var "LOWER_REGION_AUTH0_DOMAIN"
+check_env_var "LOWER_REGION_AUTH0_CLIENT_ID"
+check_env_var "LOWER_REGION_AUTH0_CLIENT_SECRET"
+check_env_var "UPPER_REGION_AUTH0_DOMAIN"
+check_env_var "UPPER_REGION_AUTH0_CLIENT_ID"
+check_env_var "UPPER_REGION_AUTH0_CLIENT_SECRET"
 
 log_ok "All required environment variables are set."
 
@@ -58,26 +58,26 @@ log_ok "All required environment variables are set."
 # Cleanup function to remove temp config files (contains secrets)
 # -----------------------------------------------------------------------------
 cleanup() {
-  rm -f "${SANDBOX_CONFIG:-}" "${DEV_CONFIG:-}" /tmp/vault-conn-map.*.json /tmp/flow-map.*.json
+  rm -f "${LOWER_REGION_CONFIG:-}" "${UPPER_REGION_CONFIG:-}" /tmp/vault-conn-map.*.json /tmp/flow-map.*.json
 }
 trap cleanup EXIT
 
 # -----------------------------------------------------------------------------
-# Step 1: Export from Sandbox
+# Step 1: Export from Lower Region
 # -----------------------------------------------------------------------------
-log_info "Exporting Auth0 config from Sandbox (${SANDBOX_AUTH0_DOMAIN})..."
+log_info "Exporting Auth0 config from Lower Region (${LOWER_REGION_AUTH0_DOMAIN})..."
 
 # Clean previous export to avoid stale data
 rm -rf "${EXPORT_DIR}"
 mkdir -p "${EXPORT_DIR}"
 
 # Write config to a temp file (a0deploy doesn't reliably read from stdin)
-SANDBOX_CONFIG=$(mktemp /tmp/auth0-sandbox-config.XXXXXX.json)
-cat > "${SANDBOX_CONFIG}" <<EOF
+LOWER_REGION_CONFIG=$(mktemp /tmp/auth0-lower-region-config.XXXXXX.json)
+cat > "${LOWER_REGION_CONFIG}" <<EOF
 {
-  "AUTH0_DOMAIN": "${SANDBOX_AUTH0_DOMAIN}",
-  "AUTH0_CLIENT_ID": "${SANDBOX_AUTH0_CLIENT_ID}",
-  "AUTH0_CLIENT_SECRET": "${SANDBOX_AUTH0_CLIENT_SECRET}",
+  "AUTH0_DOMAIN": "${LOWER_REGION_AUTH0_DOMAIN}",
+  "AUTH0_CLIENT_ID": "${LOWER_REGION_AUTH0_CLIENT_ID}",
+  "AUTH0_CLIENT_SECRET": "${LOWER_REGION_AUTH0_CLIENT_SECRET}",
   "AUTH0_EXCLUDED": [
     "guardianFactors",
     "guardianFactorProviders",
@@ -93,16 +93,16 @@ cat > "${SANDBOX_CONFIG}" <<EOF
 EOF
 
 log_info "Config file contents (secrets masked):"
-echo "  AUTH0_DOMAIN: ${SANDBOX_AUTH0_DOMAIN}"
-echo "  AUTH0_CLIENT_ID: ${SANDBOX_AUTH0_CLIENT_ID:0:8}..."
-echo "  Config path: ${SANDBOX_CONFIG}"
+echo "  AUTH0_DOMAIN: ${LOWER_REGION_AUTH0_DOMAIN}"
+echo "  AUTH0_CLIENT_ID: ${LOWER_REGION_AUTH0_CLIENT_ID:0:8}..."
+echo "  Config path: ${LOWER_REGION_CONFIG}"
 
 log_info "Running: a0deploy export --format yaml --output_folder ${EXPORT_DIR}"
 
 a0deploy export \
   --format yaml \
   --output_folder "${EXPORT_DIR}" \
-  --config_file "${SANDBOX_CONFIG}" || {
+  --config_file "${LOWER_REGION_CONFIG}" || {
     log_error "a0deploy export failed with exit code $?"
     log_error "Listing export directory contents:"
     ls -la "${EXPORT_DIR}" 2>/dev/null || echo "  (directory does not exist)"
@@ -112,25 +112,25 @@ a0deploy export \
 # Verify export produced the tenant file
 if [ ! -f "${TENANT_FILE}" ]; then
   log_error "Export failed — expected file not found: ${TENANT_FILE}"
-  log_error "Check Sandbox credentials and Auth0 Deploy CLI M2M app permissions."
+  log_error "Check Lower Region credentials and Auth0 Deploy CLI M2M app permissions."
   exit 1
 fi
 
 log_ok "Export completed. Tenant config written to: ${TENANT_FILE}"
 
 # -----------------------------------------------------------------------------
-# Step 1b: Transform exported config for Dev tenant
+# Step 1b: Transform exported config for Upper Region tenant
 # -----------------------------------------------------------------------------
-log_info "Transforming exported config for Dev tenant..."
+log_info "Transforming exported config for Upper Region tenant..."
 
-# Replace Sandbox Management API audience with Dev audience in tenant.yaml
-# This fixes clientGrants that reference the Sandbox Management API
-SANDBOX_API_AUDIENCE="https://${SANDBOX_AUTH0_DOMAIN}/api/v2/"
-DEV_API_AUDIENCE="https://${DEV_AUTH0_DOMAIN}/api/v2/"
+# Replace Lower Region Management API audience with Upper Region audience in tenant.yaml
+# This fixes clientGrants that reference the Lower Region Management API
+LOWER_REGION_API_AUDIENCE="https://${LOWER_REGION_AUTH0_DOMAIN}/api/v2/"
+UPPER_REGION_API_AUDIENCE="https://${UPPER_REGION_AUTH0_DOMAIN}/api/v2/"
 
-log_info "Replacing audience: ${SANDBOX_API_AUDIENCE} → ${DEV_API_AUDIENCE}"
+log_info "Replacing audience: ${LOWER_REGION_API_AUDIENCE} → ${UPPER_REGION_API_AUDIENCE}"
 find "${EXPORT_DIR}" -type f \( -name "*.yaml" -o -name "*.json" \) \
-  -exec sed -i "s|${SANDBOX_API_AUDIENCE}|${DEV_API_AUDIENCE}|g" {} +
+  -exec sed -i "s|${LOWER_REGION_API_AUDIENCE}|${UPPER_REGION_API_AUDIENCE}|g" {} +
 
 # Remove custom login page incompatibility from database connections
 if [ -f "${EXPORT_DIR}/tenant.yaml" ]; then
@@ -140,15 +140,15 @@ fi
 log_ok "Transformation complete."
 
 # -----------------------------------------------------------------------------
-# Step 2: Import into Dev
+# Step 2: Import into Upper Region
 # -----------------------------------------------------------------------------
-log_info "Importing Auth0 config into Dev (${DEV_AUTH0_DOMAIN})..."
+log_info "Importing Auth0 config into Upper Region (${UPPER_REGION_AUTH0_DOMAIN})..."
 
 # IMPORTANT NOTES FOR REVIEWERS:
 # ─────────────────────────────────────────────────────────────────────────────
 # • Some resources may contain tenant-specific values (e.g., callback URLs,
 #   allowed origins, custom domain references). Review the exported YAML before
-#   promoting to ensure no Sandbox-specific URLs leak into Dev.
+#   promoting to ensure no Lower Region-specific URLs leak into Upper Region.
 #
 # • Resources that commonly need exclusions or environment-specific placeholders:
 #     - Applications → callback URLs, allowed logout URLs
@@ -163,12 +163,12 @@ log_info "Importing Auth0 config into Dev (${DEV_AUTH0_DOMAIN})..."
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Write Dev config to a temp file
-DEV_CONFIG=$(mktemp /tmp/auth0-dev-config.XXXXXX.json)
-cat > "${DEV_CONFIG}" <<EOF
+UPPER_REGION_CONFIG=$(mktemp /tmp/auth0-dev-config.XXXXXX.json)
+cat > "${UPPER_REGION_CONFIG}" <<EOF
 {
-  "AUTH0_DOMAIN": "${DEV_AUTH0_DOMAIN}",
-  "AUTH0_CLIENT_ID": "${DEV_AUTH0_CLIENT_ID}",
-  "AUTH0_CLIENT_SECRET": "${DEV_AUTH0_CLIENT_SECRET}",
+  "AUTH0_DOMAIN": "${UPPER_REGION_AUTH0_DOMAIN}",
+  "AUTH0_CLIENT_ID": "${UPPER_REGION_AUTH0_CLIENT_ID}",
+  "AUTH0_CLIENT_SECRET": "${UPPER_REGION_AUTH0_CLIENT_SECRET}",
   "AUTH0_ALLOW_DELETE": ${AUTH0_ALLOW_DELETE},
   "AUTH0_EXCLUDED": [
     "guardianFactors",
@@ -190,7 +190,7 @@ EOF
 IMPORT_ARGS=(
   --format yaml
   --input_file "${EXPORT_DIR}/tenant.yaml"
-  --config_file "${DEV_CONFIG}"
+  --config_file "${UPPER_REGION_CONFIG}"
 )
 
 # Only add --env AUTH0_ALLOW_DELETE if explicitly enabled
@@ -219,31 +219,31 @@ fi
 log_info "Syncing additional resources via Auth0 Management API..."
 
 # Get access tokens for both tenants
-SANDBOX_TOKEN=$(curl -s --request POST \
-  --url "https://${SANDBOX_AUTH0_DOMAIN}/oauth/token" \
+LOWER_REGION_TOKEN=$(curl -s --request POST \
+  --url "https://${LOWER_REGION_AUTH0_DOMAIN}/oauth/token" \
   --header 'content-type: application/json' \
   --data "{
-    \"client_id\": \"${SANDBOX_AUTH0_CLIENT_ID}\",
-    \"client_secret\": \"${SANDBOX_AUTH0_CLIENT_SECRET}\",
-    \"audience\": \"https://${SANDBOX_AUTH0_DOMAIN}/api/v2/\",
+    \"client_id\": \"${LOWER_REGION_AUTH0_CLIENT_ID}\",
+    \"client_secret\": \"${LOWER_REGION_AUTH0_CLIENT_SECRET}\",
+    \"audience\": \"https://${LOWER_REGION_AUTH0_DOMAIN}/api/v2/\",
     \"grant_type\": \"client_credentials\"
   }" | jq -r '.access_token')
 
-DEV_TOKEN=$(curl -s --request POST \
-  --url "https://${DEV_AUTH0_DOMAIN}/oauth/token" \
+UPPER_REGION_TOKEN=$(curl -s --request POST \
+  --url "https://${UPPER_REGION_AUTH0_DOMAIN}/oauth/token" \
   --header 'content-type: application/json' \
   --data "{
-    \"client_id\": \"${DEV_AUTH0_CLIENT_ID}\",
-    \"client_secret\": \"${DEV_AUTH0_CLIENT_SECRET}\",
-    \"audience\": \"https://${DEV_AUTH0_DOMAIN}/api/v2/\",
+    \"client_id\": \"${UPPER_REGION_AUTH0_CLIENT_ID}\",
+    \"client_secret\": \"${UPPER_REGION_AUTH0_CLIENT_SECRET}\",
+    \"audience\": \"https://${UPPER_REGION_AUTH0_DOMAIN}/api/v2/\",
     \"grant_type\": \"client_credentials\"
   }" | jq -r '.access_token')
 
-if [ -z "${SANDBOX_TOKEN}" ] || [ "${SANDBOX_TOKEN}" = "null" ]; then
-  log_error "Failed to get Sandbox access token"
+if [ -z "${LOWER_REGION_TOKEN}" ] || [ "${LOWER_REGION_TOKEN}" = "null" ]; then
+  log_error "Failed to get Lower Region access token"
   exit 1
 fi
-if [ -z "${DEV_TOKEN}" ] || [ "${DEV_TOKEN}" = "null" ]; then
+if [ -z "${UPPER_REGION_TOKEN}" ] || [ "${UPPER_REGION_TOKEN}" = "null" ]; then
   log_error "Failed to get Dev access token"
   exit 1
 fi
@@ -252,8 +252,8 @@ log_ok "Access tokens obtained for both tenants."
 # --- Guardian Factors ---
 log_info "Syncing Guardian factors..."
 GUARDIAN_FACTORS=$(curl -s --request GET \
-  --url "https://${SANDBOX_AUTH0_DOMAIN}/api/v2/guardian/factors" \
-  --header "authorization: Bearer ${SANDBOX_TOKEN}" \
+  --url "https://${LOWER_REGION_AUTH0_DOMAIN}/api/v2/guardian/factors" \
+  --header "authorization: Bearer ${LOWER_REGION_TOKEN}" \
   --header 'content-type: application/json')
 
 if echo "${GUARDIAN_FACTORS}" | jq -e '.' >/dev/null 2>&1; then
@@ -261,8 +261,8 @@ if echo "${GUARDIAN_FACTORS}" | jq -e '.' >/dev/null 2>&1; then
     FACTOR_NAME=$(echo "${factor}" | jq -r '.name')
     FACTOR_ENABLED=$(echo "${factor}" | jq -r '.enabled')
     curl -s --request PUT \
-      --url "https://${DEV_AUTH0_DOMAIN}/api/v2/guardian/factors/${FACTOR_NAME}" \
-      --header "authorization: Bearer ${DEV_TOKEN}" \
+      --url "https://${UPPER_REGION_AUTH0_DOMAIN}/api/v2/guardian/factors/${FACTOR_NAME}" \
+      --header "authorization: Bearer ${UPPER_REGION_TOKEN}" \
       --header 'content-type: application/json' \
       --data "{\"enabled\": ${FACTOR_ENABLED}}" > /dev/null
     sleep 1  # Rate limit protection
@@ -270,7 +270,7 @@ if echo "${GUARDIAN_FACTORS}" | jq -e '.' >/dev/null 2>&1; then
   done
   log_ok "Guardian factors synced."
 else
-  log_info "Skipping Guardian factors (unable to retrieve from Sandbox)."
+  log_info "Skipping Guardian factors (unable to retrieve from Lower Region)."
 fi
 
 # --- Attack Protection (Brute Force, Breached Password, Suspicious IP) ---
@@ -278,12 +278,12 @@ log_info "Syncing Attack Protection settings..."
 
 # Brute Force Protection
 BFP=$(curl -s --request GET \
-  --url "https://${SANDBOX_AUTH0_DOMAIN}/api/v2/attack-protection/brute-force-protection" \
-  --header "authorization: Bearer ${SANDBOX_TOKEN}")
+  --url "https://${LOWER_REGION_AUTH0_DOMAIN}/api/v2/attack-protection/brute-force-protection" \
+  --header "authorization: Bearer ${LOWER_REGION_TOKEN}")
 if echo "${BFP}" | jq -e '.enabled' >/dev/null 2>&1; then
   curl -s --request PATCH \
-    --url "https://${DEV_AUTH0_DOMAIN}/api/v2/attack-protection/brute-force-protection" \
-    --header "authorization: Bearer ${DEV_TOKEN}" \
+    --url "https://${UPPER_REGION_AUTH0_DOMAIN}/api/v2/attack-protection/brute-force-protection" \
+    --header "authorization: Bearer ${UPPER_REGION_TOKEN}" \
     --header 'content-type: application/json' \
     --data "${BFP}" > /dev/null
   echo "  ✓ Brute Force Protection synced"
@@ -291,12 +291,12 @@ fi
 
 # Breached Password Detection
 BPD=$(curl -s --request GET \
-  --url "https://${SANDBOX_AUTH0_DOMAIN}/api/v2/attack-protection/breached-password-detection" \
-  --header "authorization: Bearer ${SANDBOX_TOKEN}")
+  --url "https://${LOWER_REGION_AUTH0_DOMAIN}/api/v2/attack-protection/breached-password-detection" \
+  --header "authorization: Bearer ${LOWER_REGION_TOKEN}")
 if echo "${BPD}" | jq -e '.enabled' >/dev/null 2>&1; then
   curl -s --request PATCH \
-    --url "https://${DEV_AUTH0_DOMAIN}/api/v2/attack-protection/breached-password-detection" \
-    --header "authorization: Bearer ${DEV_TOKEN}" \
+    --url "https://${UPPER_REGION_AUTH0_DOMAIN}/api/v2/attack-protection/breached-password-detection" \
+    --header "authorization: Bearer ${UPPER_REGION_TOKEN}" \
     --header 'content-type: application/json' \
     --data "${BPD}" > /dev/null
   echo "  ✓ Breached Password Detection synced"
@@ -304,12 +304,12 @@ fi
 
 # Suspicious IP Throttling
 SIP=$(curl -s --request GET \
-  --url "https://${SANDBOX_AUTH0_DOMAIN}/api/v2/attack-protection/suspicious-ip-throttling" \
-  --header "authorization: Bearer ${SANDBOX_TOKEN}")
+  --url "https://${LOWER_REGION_AUTH0_DOMAIN}/api/v2/attack-protection/suspicious-ip-throttling" \
+  --header "authorization: Bearer ${LOWER_REGION_TOKEN}")
 if echo "${SIP}" | jq -e '.enabled' >/dev/null 2>&1; then
   curl -s --request PATCH \
-    --url "https://${DEV_AUTH0_DOMAIN}/api/v2/attack-protection/suspicious-ip-throttling" \
-    --header "authorization: Bearer ${DEV_TOKEN}" \
+    --url "https://${UPPER_REGION_AUTH0_DOMAIN}/api/v2/attack-protection/suspicious-ip-throttling" \
+    --header "authorization: Bearer ${UPPER_REGION_TOKEN}" \
     --header 'content-type: application/json' \
     --data "${SIP}" > /dev/null
   echo "  ✓ Suspicious IP Throttling synced"
@@ -319,36 +319,36 @@ log_ok "Attack Protection settings synced."
 # --- Log Streams ---
 log_info "Syncing Log Streams..."
 LOG_STREAMS=$(curl -s --request GET \
-  --url "https://${SANDBOX_AUTH0_DOMAIN}/api/v2/log-streams" \
-  --header "authorization: Bearer ${SANDBOX_TOKEN}")
+  --url "https://${LOWER_REGION_AUTH0_DOMAIN}/api/v2/log-streams" \
+  --header "authorization: Bearer ${LOWER_REGION_TOKEN}")
 
 if echo "${LOG_STREAMS}" | jq -e '.[]' >/dev/null 2>&1; then
-  # Get existing log streams in Dev
-  DEV_LOG_STREAMS=$(curl -s --request GET \
-    --url "https://${DEV_AUTH0_DOMAIN}/api/v2/log-streams" \
-    --header "authorization: Bearer ${DEV_TOKEN}")
+  # Get existing log streams in Upper Region
+  UPPER_REGION_LOG_STREAMS=$(curl -s --request GET \
+    --url "https://${UPPER_REGION_AUTH0_DOMAIN}/api/v2/log-streams" \
+    --header "authorization: Bearer ${UPPER_REGION_TOKEN}")
 
   echo "${LOG_STREAMS}" | jq -c '.[]' | while read -r stream; do
     STREAM_NAME=$(echo "${stream}" | jq -r '.name')
     STREAM_TYPE=$(echo "${stream}" | jq -r '.type')
-    # Check if already exists in Dev (by name)
-    EXISTS=$(echo "${DEV_LOG_STREAMS}" | jq -r --arg name "${STREAM_NAME}" '.[] | select(.name == $name) | .id')
+    # Check if already exists in Upper Region (by name)
+    EXISTS=$(echo "${UPPER_REGION_LOG_STREAMS}" | jq -r --arg name "${STREAM_NAME}" '.[] | select(.name == $name) | .id')
     if [ -n "${EXISTS}" ]; then
-      echo "  ⟳ Log stream '${STREAM_NAME}' already exists in Dev, skipping"
+      echo "  ⟳ Log stream '${STREAM_NAME}' already exists in Upper Region, skipping"
     else
       echo "  ℹ Log stream '${STREAM_NAME}' (type: ${STREAM_TYPE}) — skipping creation (may require environment-specific sink config)"
     fi
   done
   log_ok "Log Streams reviewed."
 else
-  log_info "No log streams found in Sandbox."
+  log_info "No log streams found in Lower Region."
 fi
 
 # --- Organizations ---
 log_info "Syncing Organizations..."
 ORGS_RAW=$(curl -s -w "\nHTTP_STATUS:%{http_code}" --request GET \
-  --url "https://${SANDBOX_AUTH0_DOMAIN}/api/v2/organizations?per_page=100&include_totals=true" \
-  --header "authorization: Bearer ${SANDBOX_TOKEN}")
+  --url "https://${LOWER_REGION_AUTH0_DOMAIN}/api/v2/organizations?per_page=100&include_totals=true" \
+  --header "authorization: Bearer ${LOWER_REGION_TOKEN}")
 
 ORGS_HTTP_STATUS=$(echo "${ORGS_RAW}" | grep "HTTP_STATUS:" | sed 's/HTTP_STATUS://')
 ORGS_BODY=$(echo "${ORGS_RAW}" | sed '/HTTP_STATUS:/d')
@@ -357,7 +357,7 @@ log_info "Organizations API response status: ${ORGS_HTTP_STATUS}"
 log_info "Organizations API raw response (first 500 chars): ${ORGS_BODY:0:500}"
 
 if [ "${ORGS_HTTP_STATUS}" != "200" ]; then
-  log_error "Failed to fetch organizations from Sandbox (HTTP ${ORGS_HTTP_STATUS})"
+  log_error "Failed to fetch organizations from Lower Region (HTTP ${ORGS_HTTP_STATUS})"
   log_error "Ensure M2M app has 'read:organizations' scope granted."
   log_info "Response: ${ORGS_BODY}"
 else
@@ -372,20 +372,20 @@ else
       ORG_NAME=$(echo "${org}" | jq -r '.name')
       ORG_DISPLAY=$(echo "${org}" | jq -r '.display_name')
       log_info "Processing organization: '${ORG_NAME}' (display: '${ORG_DISPLAY}')"
-      # Check if org exists in Dev
-      DEV_ORG=$(curl -s --request GET \
-        --url "https://${DEV_AUTH0_DOMAIN}/api/v2/organizations/name/${ORG_NAME}" \
-        --header "authorization: Bearer ${DEV_TOKEN}")
+      # Check if org exists in Upper Region
+      UPPER_REGION_ORG=$(curl -s --request GET \
+        --url "https://${UPPER_REGION_AUTH0_DOMAIN}/api/v2/organizations/name/${ORG_NAME}" \
+        --header "authorization: Bearer ${UPPER_REGION_TOKEN}")
       sleep 1  # Rate limit protection
-      if echo "${DEV_ORG}" | jq -e '.id' >/dev/null 2>&1; then
-        echo "  ⟳ Organization '${ORG_NAME}' already exists in Dev"
+      if echo "${UPPER_REGION_ORG}" | jq -e '.id' >/dev/null 2>&1; then
+        echo "  ⟳ Organization '${ORG_NAME}' already exists in Upper Region"
       else
-        # Create org in Dev — remove null fields (Auth0 rejects null for branding/metadata)
+        # Create org in Upper Region — remove null fields (Auth0 rejects null for branding/metadata)
         CREATE_PAYLOAD=$(echo "${org}" | jq '{name, display_name} + (if .branding != null then {branding} else {} end) + (if .metadata != null then {metadata} else {} end)')
         log_info "  Creating with payload: ${CREATE_PAYLOAD}"
         RESULT=$(curl -s --request POST \
-          --url "https://${DEV_AUTH0_DOMAIN}/api/v2/organizations" \
-          --header "authorization: Bearer ${DEV_TOKEN}" \
+          --url "https://${UPPER_REGION_AUTH0_DOMAIN}/api/v2/organizations" \
+          --header "authorization: Bearer ${UPPER_REGION_TOKEN}" \
           --header 'content-type: application/json' \
           --data "${CREATE_PAYLOAD}")
         sleep 2  # Rate limit protection
@@ -398,7 +398,7 @@ else
     done
     log_ok "Organizations synced."
   else
-    log_info "No organizations found in Sandbox (count=0)."
+    log_info "No organizations found in Lower Region (count=0)."
     log_info "If you expect organizations, ensure M2M app has 'read:organizations' scope."
   fi
 fi
@@ -406,16 +406,16 @@ fi
 # --- Flow Vault Connections ---
 # NOTE: Auth0 NEVER exports vault connection secrets. We sync the connection
 # metadata (name, app_id, environment, setup_type) so that connections exist in
-# Dev. Secrets must be configured manually in Dev on first-time setup.
+# Dev. Secrets must be configured manually in Upper Region on first-time setup.
 log_info "Syncing Flow Vault Connections..."
 VAULT_CONNS_RAW=$(curl -s -w "\nHTTP_STATUS:%{http_code}" --request GET \
-  --url "https://${SANDBOX_AUTH0_DOMAIN}/api/v2/flows/vault/connections" \
-  --header "authorization: Bearer ${SANDBOX_TOKEN}")
+  --url "https://${LOWER_REGION_AUTH0_DOMAIN}/api/v2/flows/vault/connections" \
+  --header "authorization: Bearer ${LOWER_REGION_TOKEN}")
 
 VAULT_HTTP=$(echo "${VAULT_CONNS_RAW}" | grep "HTTP_STATUS:" | sed 's/HTTP_STATUS://')
 VAULT_BODY=$(echo "${VAULT_CONNS_RAW}" | sed '/HTTP_STATUS:/d')
 
-# Build a mapping file: sandbox_id → dev_id (needed for flow remapping)
+# Build a mapping file: Lower Region_id → Upper Region_id (needed for flow remapping)
 VAULT_MAP_FILE=$(mktemp /tmp/vault-conn-map.XXXXXX.json)
 echo "{}" > "${VAULT_MAP_FILE}"
 
@@ -423,38 +423,38 @@ if [ "${VAULT_HTTP}" = "200" ]; then
   # Response may be { connections: [...] } or just [...]
   VAULT_CONNS=$(echo "${VAULT_BODY}" | jq -c 'if type == "array" then . elif .connections then .connections else [] end' 2>/dev/null || echo "[]")
   VAULT_COUNT=$(echo "${VAULT_CONNS}" | jq 'length')
-  log_info "Vault connections found in Sandbox: ${VAULT_COUNT}"
+  log_info "Vault connections found in Lower Region: ${VAULT_COUNT}"
 
   if [ "${VAULT_COUNT}" -gt 0 ]; then
-    # Get existing vault connections in Dev
-    DEV_VAULT_RAW=$(curl -s --request GET \
-      --url "https://${DEV_AUTH0_DOMAIN}/api/v2/flows/vault/connections" \
-      --header "authorization: Bearer ${DEV_TOKEN}")
-    DEV_VAULT_CONNS=$(echo "${DEV_VAULT_RAW}" | jq -c 'if type == "array" then . elif .connections then .connections else [] end' 2>/dev/null || echo "[]")
+    # Get existing vault connections in Upper Region
+    UPPER_REGION_VAULT_RAW=$(curl -s --request GET \
+      --url "https://${UPPER_REGION_AUTH0_DOMAIN}/api/v2/flows/vault/connections" \
+      --header "authorization: Bearer ${UPPER_REGION_TOKEN}")
+    UPPER_REGION_VAULT_CONNS=$(echo "${UPPER_REGION_VAULT_RAW}" | jq -c 'if type == "array" then . elif .connections then .connections else [] end' 2>/dev/null || echo "[]")
 
     echo "${VAULT_CONNS}" | jq -c '.[]' | while read -r conn; do
       CONN_ID=$(echo "${conn}" | jq -r '.id')
       CONN_NAME=$(echo "${conn}" | jq -r '.name')
       CONN_APP_ID=$(echo "${conn}" | jq -r '.app_id // empty')
 
-      # Check if exists in Dev by name
-      DEV_CONN_ID=$(echo "${DEV_VAULT_CONNS}" | jq -r --arg name "${CONN_NAME}" '.[] | select(.name == $name) | .id')
+      # Check if exists in Upper Region by name
+      UPPER_REGION_CONN_ID=$(echo "${UPPER_REGION_VAULT_CONNS}" | jq -r --arg name "${CONN_NAME}" '.[] | select(.name == $name) | .id')
 
-      if [ -n "${DEV_CONN_ID}" ]; then
-        echo "  ⟳ Vault connection '${CONN_NAME}' exists in Dev (id: ${DEV_CONN_ID})"
+      if [ -n "${UPPER_REGION_CONN_ID}" ]; then
+        echo "  ⟳ Vault connection '${CONN_NAME}' exists in Upper Region (id: ${UPPER_REGION_CONN_ID})"
         # Add to mapping
-        echo "$(cat "${VAULT_MAP_FILE}")" | jq --arg sid "${CONN_ID}" --arg did "${DEV_CONN_ID}" '. + {($sid): $did}' > "${VAULT_MAP_FILE}"
+        echo "$(cat "${VAULT_MAP_FILE}")" | jq --arg sid "${CONN_ID}" --arg did "${UPPER_REGION_CONN_ID}" '. + {($sid): $did}' > "${VAULT_MAP_FILE}"
       else
-        # Create in Dev — AUTH0 type connections need valid setup credentials
-        # Auth0 NEVER exports setup/secrets, so we must provide Dev M2M creds
+        # Create in Upper Region — AUTH0 type connections need valid setup credentials
+        # Auth0 NEVER exports setup/secrets, so we must provide Upper Region M2M creds
         if [ "${CONN_APP_ID}" = "AUTH0" ]; then
           # AUTH0 vault connections use M2M credentials to connect
           CREATE_VC_PAYLOAD=$(jq -n \
             --arg name "${CONN_NAME}" \
             --arg app_id "AUTH0" \
-            --arg client_id "${DEV_AUTH0_CLIENT_ID}" \
-            --arg client_secret "${DEV_AUTH0_CLIENT_SECRET}" \
-            --arg domain "${DEV_AUTH0_DOMAIN}" \
+            --arg client_id "${UPPER_REGION_AUTH0_CLIENT_ID}" \
+            --arg client_secret "${UPPER_REGION_AUTH0_CLIENT_SECRET}" \
+            --arg domain "${UPPER_REGION_AUTH0_DOMAIN}" \
             '{
               name: $name,
               app_id: $app_id,
@@ -475,23 +475,23 @@ if [ "${VAULT_HTTP}" = "200" ]; then
         fi
         log_info "  Creating vault connection '${CONN_NAME}' (app_id: ${CONN_APP_ID})"
         RESULT=$(curl -s --request POST \
-          --url "https://${DEV_AUTH0_DOMAIN}/api/v2/flows/vault/connections" \
-          --header "authorization: Bearer ${DEV_TOKEN}" \
+          --url "https://${UPPER_REGION_AUTH0_DOMAIN}/api/v2/flows/vault/connections" \
+          --header "authorization: Bearer ${UPPER_REGION_TOKEN}" \
           --header 'content-type: application/json' \
           --data "${CREATE_VC_PAYLOAD}")
         sleep 2  # Rate limit protection
         NEW_ID=$(echo "${RESULT}" | jq -r '.id // empty')
         if [ -n "${NEW_ID}" ]; then
-          echo "  ✓ Created vault connection '${CONN_NAME}' in Dev (id: ${NEW_ID})"
+          echo "  ✓ Created vault connection '${CONN_NAME}' in Upper Region (id: ${NEW_ID})"
           echo "$(cat "${VAULT_MAP_FILE}")" | jq --arg sid "${CONN_ID}" --arg did "${NEW_ID}" '. + {($sid): $did}' > "${VAULT_MAP_FILE}"
         else
           echo "  ⚠ Failed to create vault connection '${CONN_NAME}': $(echo "${RESULT}" | jq -c '.')"
         fi
       fi
     done || true
-    log_ok "Vault connections synced (secrets need manual setup in Dev)."
+    log_ok "Vault connections synced (secrets need manual setup in Upper Region)."
   else
-    log_info "No vault connections found in Sandbox."
+    log_info "No vault connections found in Lower Region."
   fi
 else
   log_error "Failed to fetch vault connections (HTTP ${VAULT_HTTP}). Ensure M2M app has 'read:flows' scope."
@@ -501,8 +501,8 @@ fi
 # --- Flows ---
 log_info "Syncing Flows..."
 FLOWS_RAW=$(curl -s -w "\nHTTP_STATUS:%{http_code}" --request GET \
-  --url "https://${SANDBOX_AUTH0_DOMAIN}/api/v2/flows" \
-  --header "authorization: Bearer ${SANDBOX_TOKEN}")
+  --url "https://${LOWER_REGION_AUTH0_DOMAIN}/api/v2/flows" \
+  --header "authorization: Bearer ${LOWER_REGION_TOKEN}")
 
 FLOWS_HTTP=$(echo "${FLOWS_RAW}" | grep "HTTP_STATUS:" | sed 's/HTTP_STATUS://')
 FLOWS_BODY=$(echo "${FLOWS_RAW}" | sed '/HTTP_STATUS:/d')
@@ -514,14 +514,14 @@ echo "{}" > "${FLOW_MAP_FILE}"
 if [ "${FLOWS_HTTP}" = "200" ]; then
   FLOWS=$(echo "${FLOWS_BODY}" | jq -c 'if type == "array" then . elif .flows then .flows else [] end' 2>/dev/null || echo "[]")
   FLOW_COUNT=$(echo "${FLOWS}" | jq 'length')
-  log_info "Flows found in Sandbox: ${FLOW_COUNT}"
+  log_info "Flows found in Lower Region: ${FLOW_COUNT}"
 
   if [ "${FLOW_COUNT}" -gt 0 ]; then
-    # Get existing flows in Dev
-    DEV_FLOWS_RAW=$(curl -s --request GET \
-      --url "https://${DEV_AUTH0_DOMAIN}/api/v2/flows" \
-      --header "authorization: Bearer ${DEV_TOKEN}")
-    DEV_FLOWS=$(echo "${DEV_FLOWS_RAW}" | jq -c 'if type == "array" then . elif .flows then .flows else [] end' 2>/dev/null || echo "[]")
+    # Get existing flows in Upper Region
+    UPPER_REGION_FLOWS_RAW=$(curl -s --request GET \
+      --url "https://${UPPER_REGION_AUTH0_DOMAIN}/api/v2/flows" \
+      --header "authorization: Bearer ${UPPER_REGION_TOKEN}")
+    UPPER_REGION_FLOWS=$(echo "${UPPER_REGION_FLOWS_RAW}" | jq -c 'if type == "array" then . elif .flows then .flows else [] end' 2>/dev/null || echo "[]")
 
     echo "${FLOWS}" | jq -c '.[]' | while read -r flow; do
       FLOW_ID=$(echo "${flow}" | jq -r '.id')
@@ -532,8 +532,8 @@ if [ "${FLOWS_HTTP}" = "200" ]; then
 
       # Get full flow definition (with DAG/nodes)
       FLOW_DETAIL=$(curl -s --request GET \
-        --url "https://${SANDBOX_AUTH0_DOMAIN}/api/v2/flows/${FLOW_ID}" \
-        --header "authorization: Bearer ${SANDBOX_TOKEN}")
+        --url "https://${LOWER_REGION_AUTH0_DOMAIN}/api/v2/flows/${FLOW_ID}" \
+        --header "authorization: Bearer ${LOWER_REGION_TOKEN}")
 
       # Remap vault connection IDs in the flow definition
       FLOW_DEF=$(echo "${FLOW_DETAIL}" | jq 'del(.id, .created_at, .updated_at, .executed_at)')
@@ -545,28 +545,28 @@ if [ "${FLOWS_HTTP}" = "200" ]; then
         FLOW_DEF=$(echo "${FLOW_DEF}" | jq '.actions = []')
       fi
 
-      # Replace Sandbox vault connection IDs with Dev IDs
+      # Replace Lower Region vault connection IDs with Upper Region IDs
       VAULT_MAP=$(cat "${VAULT_MAP_FILE}")
       for SB_VC_ID in $(echo "${VAULT_MAP}" | jq -r 'keys[]'); do
-        DEV_VC_ID=$(echo "${VAULT_MAP}" | jq -r --arg k "${SB_VC_ID}" '.[$k]')
-        FLOW_DEF=$(echo "${FLOW_DEF}" | sed "s/${SB_VC_ID}/${DEV_VC_ID}/g")
+        UPPER_REGION_VC_ID=$(echo "${VAULT_MAP}" | jq -r --arg k "${SB_VC_ID}" '.[$k]')
+        FLOW_DEF=$(echo "${FLOW_DEF}" | sed "s/${SB_VC_ID}/${UPPER_REGION_VC_ID}/g")
       done
 
-      # Check if flow exists in Dev by name
-      DEV_FLOW_ID=$(echo "${DEV_FLOWS}" | jq -r --arg name "${FLOW_NAME}" '.[] | select(.name == $name) | .id')
+      # Check if flow exists in Upper Region by name
+      UPPER_REGION_FLOW_ID=$(echo "${UPPER_REGION_FLOWS}" | jq -r --arg name "${FLOW_NAME}" '.[] | select(.name == $name) | .id')
 
-      if [ -n "${DEV_FLOW_ID}" ]; then
+      if [ -n "${UPPER_REGION_FLOW_ID}" ]; then
         # Update existing flow
         UPDATE_PAYLOAD=$(echo "${FLOW_DEF}" | jq '{name, actions}')
         RESULT=$(curl -s --request PATCH \
-          --url "https://${DEV_AUTH0_DOMAIN}/api/v2/flows/${DEV_FLOW_ID}" \
-          --header "authorization: Bearer ${DEV_TOKEN}" \
+          --url "https://${UPPER_REGION_AUTH0_DOMAIN}/api/v2/flows/${UPPER_REGION_FLOW_ID}" \
+          --header "authorization: Bearer ${UPPER_REGION_TOKEN}" \
           --header 'content-type: application/json' \
           --data "${UPDATE_PAYLOAD}")
         sleep 2  # Rate limit protection
         if echo "${RESULT}" | jq -e '.id' >/dev/null 2>&1; then
-          echo "  ✓ Updated flow '${FLOW_NAME}' in Dev"
-          echo "$(cat "${FLOW_MAP_FILE}")" | jq --arg sid "${FLOW_ID}" --arg did "${DEV_FLOW_ID}" '. + {($sid): $did}' > "${FLOW_MAP_FILE}"
+          echo "  ✓ Updated flow '${FLOW_NAME}' in Upper Region"
+          echo "$(cat "${FLOW_MAP_FILE}")" | jq --arg sid "${FLOW_ID}" --arg did "${UPPER_REGION_FLOW_ID}" '. + {($sid): $did}' > "${FLOW_MAP_FILE}"
         else
           echo "  ⚠ Failed to update flow '${FLOW_NAME}': $(echo "${RESULT}" | jq -r '.message // .error // "unknown"')"
         fi
@@ -574,14 +574,14 @@ if [ "${FLOWS_HTTP}" = "200" ]; then
         # Create new flow
         CREATE_PAYLOAD=$(echo "${FLOW_DEF}" | jq '{name, actions}')
         RESULT=$(curl -s --request POST \
-          --url "https://${DEV_AUTH0_DOMAIN}/api/v2/flows" \
-          --header "authorization: Bearer ${DEV_TOKEN}" \
+          --url "https://${UPPER_REGION_AUTH0_DOMAIN}/api/v2/flows" \
+          --header "authorization: Bearer ${UPPER_REGION_TOKEN}" \
           --header 'content-type: application/json' \
           --data "${CREATE_PAYLOAD}")
         sleep 2  # Rate limit protection
         NEW_FLOW_ID=$(echo "${RESULT}" | jq -r '.id // empty')
         if [ -n "${NEW_FLOW_ID}" ]; then
-          echo "  ✓ Created flow '${FLOW_NAME}' in Dev (id: ${NEW_FLOW_ID})"
+          echo "  ✓ Created flow '${FLOW_NAME}' in Upper Region (id: ${NEW_FLOW_ID})"
           echo "$(cat "${FLOW_MAP_FILE}")" | jq --arg sid "${FLOW_ID}" --arg did "${NEW_FLOW_ID}" '. + {($sid): $did}' > "${FLOW_MAP_FILE}"
         else
           echo "  ⚠ Failed to create flow '${FLOW_NAME}': $(echo "${RESULT}" | jq -r '.message // .error // "unknown"')"
@@ -590,7 +590,7 @@ if [ "${FLOWS_HTTP}" = "200" ]; then
     done || true
     log_ok "Flows synced."
   else
-    log_info "No flows found in Sandbox."
+    log_info "No flows found in Lower Region."
   fi
 else
   log_error "Failed to fetch flows (HTTP ${FLOWS_HTTP}). Ensure M2M app has 'read:flows' scope."
@@ -600,8 +600,8 @@ fi
 # --- Forms ---
 log_info "Syncing Forms..."
 FORMS_RAW=$(curl -s -w "\nHTTP_STATUS:%{http_code}" --request GET \
-  --url "https://${SANDBOX_AUTH0_DOMAIN}/api/v2/forms" \
-  --header "authorization: Bearer ${SANDBOX_TOKEN}")
+  --url "https://${LOWER_REGION_AUTH0_DOMAIN}/api/v2/forms" \
+  --header "authorization: Bearer ${LOWER_REGION_TOKEN}")
 
 FORMS_HTTP=$(echo "${FORMS_RAW}" | grep "HTTP_STATUS:" | sed 's/HTTP_STATUS://')
 FORMS_BODY=$(echo "${FORMS_RAW}" | sed '/HTTP_STATUS:/d')
@@ -609,14 +609,14 @@ FORMS_BODY=$(echo "${FORMS_RAW}" | sed '/HTTP_STATUS:/d')
 if [ "${FORMS_HTTP}" = "200" ]; then
   FORMS=$(echo "${FORMS_BODY}" | jq -c 'if type == "array" then . elif .forms then .forms else [] end' 2>/dev/null || echo "[]")
   FORM_COUNT=$(echo "${FORMS}" | jq 'length')
-  log_info "Forms found in Sandbox: ${FORM_COUNT}"
+  log_info "Forms found in Lower Region: ${FORM_COUNT}"
 
   if [ "${FORM_COUNT}" -gt 0 ]; then
-    # Get existing forms in Dev
-    DEV_FORMS_RAW=$(curl -s --request GET \
-      --url "https://${DEV_AUTH0_DOMAIN}/api/v2/forms" \
-      --header "authorization: Bearer ${DEV_TOKEN}")
-    DEV_FORMS=$(echo "${DEV_FORMS_RAW}" | jq -c 'if type == "array" then . elif .forms then .forms else [] end' 2>/dev/null || echo "[]")
+    # Get existing forms in Upper Region
+    UPPER_REGION_FORMS_RAW=$(curl -s --request GET \
+      --url "https://${UPPER_REGION_AUTH0_DOMAIN}/api/v2/forms" \
+      --header "authorization: Bearer ${UPPER_REGION_TOKEN}")
+    UPPER_REGION_FORMS=$(echo "${UPPER_REGION_FORMS_RAW}" | jq -c 'if type == "array" then . elif .forms then .forms else [] end' 2>/dev/null || echo "[]")
 
     echo "${FORMS}" | jq -c '.[]' 2>/dev/null | while read -r form || [ -n "${form}" ]; do
       FORM_ID=$(echo "${form}" | jq -r '.id' 2>/dev/null || echo "")
@@ -631,8 +631,8 @@ if [ "${FORMS_HTTP}" = "200" ]; then
 
       # Get full form definition
       FORM_DETAIL=$(curl -s --request GET \
-        --url "https://${SANDBOX_AUTH0_DOMAIN}/api/v2/forms/${FORM_ID}" \
-        --header "authorization: Bearer ${SANDBOX_TOKEN}")
+        --url "https://${LOWER_REGION_AUTH0_DOMAIN}/api/v2/forms/${FORM_ID}" \
+        --header "authorization: Bearer ${LOWER_REGION_TOKEN}")
 
       # Validate form detail was retrieved
       if ! echo "${FORM_DETAIL}" | jq -e '.name' >/dev/null 2>&1; then
@@ -646,44 +646,44 @@ if [ "${FORMS_HTTP}" = "200" ]; then
       # Remap flow IDs in form (forms can embed flow references)
       FLOW_MAP=$(cat "${FLOW_MAP_FILE}")
       for SB_FLOW_ID in $(echo "${FLOW_MAP}" | jq -r 'keys[]'); do
-        DEV_FLOW_ID=$(echo "${FLOW_MAP}" | jq -r --arg k "${SB_FLOW_ID}" '.[$k]')
-        FORM_DEF=$(echo "${FORM_DEF}" | sed "s/${SB_FLOW_ID}/${DEV_FLOW_ID}/g")
+        UPPER_REGION_FLOW_ID=$(echo "${FLOW_MAP}" | jq -r --arg k "${SB_FLOW_ID}" '.[$k]')
+        FORM_DEF=$(echo "${FORM_DEF}" | sed "s/${SB_FLOW_ID}/${UPPER_REGION_FLOW_ID}/g")
       done
 
       # Also remap vault connection IDs in forms
       VAULT_MAP=$(cat "${VAULT_MAP_FILE}")
       for SB_VC_ID in $(echo "${VAULT_MAP}" | jq -r 'keys[]'); do
-        DEV_VC_ID=$(echo "${VAULT_MAP}" | jq -r --arg k "${SB_VC_ID}" '.[$k]')
-        FORM_DEF=$(echo "${FORM_DEF}" | sed "s/${SB_VC_ID}/${DEV_VC_ID}/g")
+        UPPER_REGION_VC_ID=$(echo "${VAULT_MAP}" | jq -r --arg k "${SB_VC_ID}" '.[$k]')
+        FORM_DEF=$(echo "${FORM_DEF}" | sed "s/${SB_VC_ID}/${UPPER_REGION_VC_ID}/g")
       done
 
-      # Check if form exists in Dev by name
-      DEV_FORM_ID=$(echo "${DEV_FORMS}" | jq -r --arg name "${FORM_NAME}" '.[] | select(.name == $name) | .id')
+      # Check if form exists in Upper Region by name
+      UPPER_REGION_FORM_ID=$(echo "${UPPER_REGION_FORMS}" | jq -r --arg name "${FORM_NAME}" '.[] | select(.name == $name) | .id')
 
-      if [ -n "${DEV_FORM_ID}" ]; then
+      if [ -n "${UPPER_REGION_FORM_ID}" ]; then
         # Update existing form
         UPDATE_PAYLOAD=$(echo "${FORM_DEF}" | jq 'del(.id)')
         RESULT=$(curl -s --request PATCH \
-          --url "https://${DEV_AUTH0_DOMAIN}/api/v2/forms/${DEV_FORM_ID}" \
-          --header "authorization: Bearer ${DEV_TOKEN}" \
+          --url "https://${UPPER_REGION_AUTH0_DOMAIN}/api/v2/forms/${UPPER_REGION_FORM_ID}" \
+          --header "authorization: Bearer ${UPPER_REGION_TOKEN}" \
           --header 'content-type: application/json' \
           --data "${UPDATE_PAYLOAD}")
         sleep 2  # Rate limit protection
         if echo "${RESULT}" | jq -e '.id' >/dev/null 2>&1; then
-          echo "  ✓ Updated form '${FORM_NAME}' in Dev"
+          echo "  ✓ Updated form '${FORM_NAME}' in Upper Region"
         else
           echo "  ⚠ Failed to update form '${FORM_NAME}': $(echo "${RESULT}" | jq -r '.message // .error // "unknown"')"
         fi
       else
         # Create new form
         RESULT=$(curl -s --request POST \
-          --url "https://${DEV_AUTH0_DOMAIN}/api/v2/forms" \
-          --header "authorization: Bearer ${DEV_TOKEN}" \
+          --url "https://${UPPER_REGION_AUTH0_DOMAIN}/api/v2/forms" \
+          --header "authorization: Bearer ${UPPER_REGION_TOKEN}" \
           --header 'content-type: application/json' \
           --data "${FORM_DEF}")
         sleep 2  # Rate limit protection
         if echo "${RESULT}" | jq -e '.id' >/dev/null 2>&1; then
-          echo "  ✓ Created form '${FORM_NAME}' in Dev"
+          echo "  ✓ Created form '${FORM_NAME}' in Upper Region"
         else
           echo "  ⚠ Failed to create form '${FORM_NAME}': $(echo "${RESULT}" | jq -r '.message // .error // "unknown"')"
         fi
@@ -691,7 +691,7 @@ if [ "${FORMS_HTTP}" = "200" ]; then
     done || true
     log_ok "Forms synced."
   else
-    log_info "No forms found in Sandbox."
+    log_info "No forms found in Lower Region."
   fi
 else
   log_error "Failed to fetch forms (HTTP ${FORMS_HTTP}). Ensure M2M app has 'read:forms' scope."
@@ -707,8 +707,8 @@ rm -f "${VAULT_MAP_FILE}" "${FLOW_MAP_FILE}"
 echo ""
 echo "═══════════════════════════════════════════════════════════════════════════"
 echo " Auth0 Promotion Complete"
-echo " Source:      ${SANDBOX_AUTH0_DOMAIN} (Sandbox)"
-echo " Destination: ${DEV_AUTH0_DOMAIN} (Dev)"
+echo " Source: ${LOWER_REGION_AUTH0_DOMAIN} (Lower Region)"
+echo " Destination: ${UPPER_REGION_AUTH0_DOMAIN} (Upper Region)"
 echo " Delete mode: ${AUTH0_ALLOW_DELETE}"
 echo ""
 echo " Deploy CLI imported: pages, clients, actions, connections, roles,"
@@ -718,7 +718,7 @@ echo "   flows, forms, vault connections"
 echo ""
 echo " NOTE: Vault connection SECRETS are never exported by Auth0."
 echo " If new vault connections were created, configure their secrets"
-echo " manually in the Dev tenant (one-time setup)."
+echo " manually in the Upper Region tenant (one-time setup)."
 echo "═══════════════════════════════════════════════════════════════════════════"
 
 # Exit with failure if Deploy CLI import had errors
