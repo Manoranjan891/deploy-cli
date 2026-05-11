@@ -27,7 +27,7 @@ module.exports = {
     /** Paths considered Auth0 configuration */
     auth0Paths: ['auth0/', 'auth0/exported/'],
     /** File extensions to analyze */
-    analyzableExtensions: ['.yaml', '.yml', '.json', '.js', '.ts'],
+    analyzableExtensions: ['.yaml', '.yml', '.json', '.js', '.ts', '.html'],
   },
 
   /**

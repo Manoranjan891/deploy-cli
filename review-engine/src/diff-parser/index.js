@@ -127,11 +127,19 @@ function getChangedFiles(options = {}) {
   }
 
   if (!diffOutput) {
-    console.warn('[AuthGuardian] No changed files detected in diff.');
-    return [];
+    console.warn('[AuthGuardian] No changed files detected in diff. Falling back to filesystem scan.');
+    return scanAllAuth0Files(workDir);
   }
 
-  return parseDiffOutput(diffOutput, workDir);
+  const parsed = parseDiffOutput(diffOutput, workDir);
+
+  // If diff found changes but none were Auth0 files, fall back to filesystem scan
+  if (parsed.length === 0) {
+    console.warn('[AuthGuardian] Diff found changes but no Auth0 files. Falling back to filesystem scan.');
+    return scanAllAuth0Files(workDir);
+  }
+
+  return parsed;
 }
 
 /**

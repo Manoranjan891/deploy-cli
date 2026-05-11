@@ -2,11 +2,16 @@
 # GitHub Actions Workflow: Auth0 Promote Lower Region → Upper Region
 # WITH AuthGuardian AI Review Layer
 # =============================================================================
-# This workflow ADDS an AI-assisted governance and security review layer
-# that runs BEFORE the existing deployment script (scripts/promote-auth0.sh).
+# This workflow integrates an AI-assisted governance and security review layer
+# between the Auth0 export and import steps.
+#
+# Pipeline flow:
+#   1. Export Auth0 config from Lower Region → auth0/exported/
+#   2. AuthGuardian AI reviews exported config + code for security risks
+#   3. Import Auth0 config into Upper Region (scripts/promote-auth0.sh)
 #
 # The review layer:
-#   - Analyzes changed Auth0 configuration files
+#   - Analyzes exported Auth0 configuration files
 #   - Reviews Auth0 Actions/Rules/Hooks code for security issues
 #   - Generates deployment-review.md and ai-review-report.md
 #   - Posts PR comments with findings
@@ -62,98 +67,32 @@ env:
 
 jobs:
   # ═══════════════════════════════════════════════════════════════════════════
-  # JOB 1: AuthGuardian AI — Security & Governance Review
-  # Runs BEFORE deployment. Does NOT modify any Auth0 resources.
-  # ═══════════════════════════════════════════════════════════════════════════
-  authguardian-review:
-    name: "🛡️ AuthGuardian AI Review"
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    if: ${{ github.event.inputs.skip_review != 'true' }}
-
-    outputs:
-      findings: ${{ steps.review.outputs.authguardian_findings }}
-      critical: ${{ steps.review.outputs.authguardian_critical }}
-      high: ${{ steps.review.outputs.authguardian_high }}
-      risk_score: ${{ steps.review.outputs.authguardian_riskScore }}
-      status: ${{ steps.review.outputs.authguardian_status }}
-      can_deploy: ${{ steps.review.outputs.authguardian_canDeploy }}
-
-    steps:
-      # ── Checkout ──────────────────────────────────────────────
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Full history needed for git diff
-
-      # ── Setup Node.js ─────────────────────────────────────────
-      - name: Setup Node.js ${{ env.NODE_VERSION }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      # ── Install review engine dependencies ────────────────────
-      - name: Install AuthGuardian AI dependencies
-        working-directory: review-engine
-        run: npm ci --production 2>/dev/null || npm install --production
-
-      # ── Run AuthGuardian AI Review ────────────────────────────
-      - name: Run AuthGuardian AI Review
-        id: review
-        working-directory: review-engine
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          AUTHGUARDIAN_BASE_REF: ${{ github.event.pull_request.base.sha || 'origin/main' }}
-          AUTHGUARDIAN_PR_NUMBER: ${{ github.event.pull_request.number }}
-          AUTHGUARDIAN_BLOCK_ON_CRITICAL: ${{ github.event.inputs.block_on_critical || 'false' }}
-          AUTHGUARDIAN_MODE: all
-        run: node src/index.js
-
-      # ── Upload review reports as artifact ─────────────────────
-      - name: Upload AuthGuardian AI Reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: authguardian-reports
-          path: review-engine/reports/
-          retention-days: 30
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # JOB 2: Auth0 Deployment (EXISTING — unchanged)
-  # Promotes Auth0 configuration from Lower Region → Upper Region.
-  # Runs AFTER AuthGuardian review completes.
+  # Single Job: Export → AuthGuardian Review → Import
   # ═══════════════════════════════════════════════════════════════════════════
   promote:
-    name: "🚀 Export Lower Region → Import Upper Region"
+    name: "🚀 Auth0 Promote (with AuthGuardian Review)"
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    needs: authguardian-review
-    # Deploy even if review found issues (unless BLOCKED)
-    # To enforce blocking on critical findings, change the condition:
-    #   needs.authguardian-review.outputs.can_deploy == 'true'
-    if: |
-      always() &&
-      (needs.authguardian-review.result == 'success' || needs.authguardian-review.result == 'skipped') &&
-      github.event_name != 'pull_request'
+    timeout-minutes: 30
 
     steps:
-      # ── Checkout ──────────────────────────────────────────────
+      # ─────────────────────────────────────────────────────────
+      # Setup
+      # ─────────────────────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      # ── Setup Node.js ─────────────────────────────────────────
       - name: Setup Node.js ${{ env.NODE_VERSION }}
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      # ── Install Auth0 Deploy CLI ──────────────────────────────
       - name: Install Auth0 Deploy CLI
         run: |
           npm install -g auth0-deploy-cli@${{ env.DEPLOY_CLI_VERSION }}
           a0deploy --version
 
-      # ── Validate required files ───────────────────────────────
       - name: Validate required files
         run: |
           echo "::group::Checking required files"
@@ -174,25 +113,94 @@ jobs:
           fi
           echo "::endgroup::"
 
-      # ── Log AuthGuardian review results ───────────────────────
-      - name: Log AuthGuardian Review Results
-        if: needs.authguardian-review.result == 'success'
-        run: |
-          echo "::group::AuthGuardian AI Review Results"
-          echo "  Findings:    ${{ needs.authguardian-review.outputs.findings }}"
-          echo "  Critical:    ${{ needs.authguardian-review.outputs.critical }}"
-          echo "  High:        ${{ needs.authguardian-review.outputs.high }}"
-          echo "  Risk Score:  ${{ needs.authguardian-review.outputs.risk_score }}"
-          echo "  Status:      ${{ needs.authguardian-review.outputs.status }}"
-          echo "  Can Deploy:  ${{ needs.authguardian-review.outputs.can_deploy }}"
-          echo "::endgroup::"
-
-      # ── Make scripts executable ───────────────────────────────
       - name: Make scripts executable
         run: chmod +x scripts/promote-auth0.sh
 
-      # ── Run promotion (EXISTING — unchanged) ──────────────────
-      - name: Promote Auth0 config (Lower Region → Upper Region)
+      # ─────────────────────────────────────────────────────────
+      # Step 1: Export Auth0 config from Lower Region
+      # (Only export — stops before import)
+      # ─────────────────────────────────────────────────────────
+      - name: "📤 Export Auth0 config from Lower Region"
+        env:
+          LOWER_REGION_AUTH0_DOMAIN: ${{ secrets.LOWER_REGION_AUTH0_DOMAIN }}
+          LOWER_REGION_AUTH0_CLIENT_ID: ${{ secrets.LOWER_REGION_AUTH0_CLIENT_ID }}
+          LOWER_REGION_AUTH0_CLIENT_SECRET: ${{ secrets.LOWER_REGION_AUTH0_CLIENT_SECRET }}
+        run: |
+          echo "▶ Exporting Auth0 config from Lower Region..."
+          EXPORT_DIR="auth0/exported"
+          rm -rf "${EXPORT_DIR}"
+          mkdir -p "${EXPORT_DIR}"
+
+          CONFIG_FILE=$(mktemp /tmp/auth0-export-config.XXXXXX.json)
+          cat > "${CONFIG_FILE}" <<EOF
+          {
+            "AUTH0_DOMAIN": "${LOWER_REGION_AUTH0_DOMAIN}",
+            "AUTH0_CLIENT_ID": "${LOWER_REGION_AUTH0_CLIENT_ID}",
+            "AUTH0_CLIENT_SECRET": "${LOWER_REGION_AUTH0_CLIENT_SECRET}",
+            "AUTH0_EXCLUDED": [
+              "guardianFactors",
+              "guardianFactorProviders",
+              "guardianFactorTemplates",
+              "guardianPhoneFactorMessageTypes",
+              "guardianPhoneFactorSelectedProvider",
+              "guardianPolicies",
+              "logStreams",
+              "attackProtection",
+              "organizations"
+            ]
+          }
+          EOF
+
+          a0deploy export \
+            --format yaml \
+            --output_folder "${EXPORT_DIR}" \
+            --config_file "${CONFIG_FILE}"
+
+          rm -f "${CONFIG_FILE}"
+
+          if [ ! -f "${EXPORT_DIR}/tenant.yaml" ]; then
+            echo "::error::Export failed — tenant.yaml not found"
+            exit 1
+          fi
+
+          echo "✓ Export completed. Files exported:"
+          find "${EXPORT_DIR}" -type f | head -50
+
+      # ─────────────────────────────────────────────────────────
+      # Step 2: AuthGuardian AI Review (reviews exported files)
+      # ─────────────────────────────────────────────────────────
+      - name: Install AuthGuardian AI dependencies
+        if: ${{ github.event.inputs.skip_review != 'true' }}
+        working-directory: review-engine
+        run: npm ci --production 2>/dev/null || npm install --production
+
+      - name: "🛡️ AuthGuardian AI Review"
+        id: review
+        if: ${{ github.event.inputs.skip_review != 'true' }}
+        working-directory: review-engine
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AUTHGUARDIAN_SCAN_DIR: ${{ github.workspace }}
+          AUTHGUARDIAN_PR_NUMBER: ${{ github.event.pull_request.number }}
+          AUTHGUARDIAN_BLOCK_ON_CRITICAL: ${{ github.event.inputs.block_on_critical || 'false' }}
+          AUTHGUARDIAN_MODE: all
+        run: node src/index.js
+
+      - name: Upload AuthGuardian AI Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: authguardian-reports
+          path: review-engine/reports/
+          retention-days: 30
+          if-no-files-found: warn
+
+      # ─────────────────────────────────────────────────────────
+      # Step 3: Full Promotion (Export + Import via promote-auth0.sh)
+      # Only runs on push to main (not on PRs)
+      # ─────────────────────────────────────────────────────────
+      - name: "🚀 Promote Auth0 config (Lower Region → Upper Region)"
+        if: github.event_name != 'pull_request'
         env:
           LOWER_REGION_AUTH0_DOMAIN: ${{ secrets.LOWER_REGION_AUTH0_DOMAIN }}
           LOWER_REGION_AUTH0_CLIENT_ID: ${{ secrets.LOWER_REGION_AUTH0_CLIENT_ID }}
@@ -202,7 +210,9 @@ jobs:
           UPPER_REGION_AUTH0_CLIENT_SECRET: ${{ secrets.UPPER_REGION_AUTH0_CLIENT_SECRET }}
         run: ./scripts/promote-auth0.sh
 
-      # ── Upload exported config artifact ───────────────────────
+      # ─────────────────────────────────────────────────────────
+      # Artifacts
+      # ─────────────────────────────────────────────────────────
       - name: Upload exported config artifact
         if: always()
         uses: actions/upload-artifact@v4

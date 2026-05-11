@@ -63,8 +63,18 @@ async function main() {
 
   // ── Step 1: Parse Changed Files ──────────────────────────────
   console.log('▶ [Step 1/5] Parsing changed Auth0 files...');
+
+  // AUTHGUARDIAN_SCAN_DIR allows scanning a specific directory (e.g., auth0/exported/)
+  // instead of relying on git diff. Used when configs are generated at runtime.
+  const scanDir = process.env.AUTHGUARDIAN_SCAN_DIR;
+  const workDir = scanDir ? path.resolve(scanDir) : path.resolve(process.cwd(), '..');
+
+  if (scanDir) {
+    console.log(`   Scan mode: direct filesystem scan of ${workDir}`);
+  }
+
   const changedFiles = diffParser.getChangedFiles({
-    workDir: path.resolve(process.cwd(), '..'),
+    workDir,
   });
 
   if (changedFiles.length === 0) {
