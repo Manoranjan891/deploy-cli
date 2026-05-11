@@ -256,10 +256,19 @@ GUARDIAN_FACTORS=$(curl -s --request GET \
   --header "authorization: Bearer ${LOWER_REGION_TOKEN}" \
   --header 'content-type: application/json')
 
-if echo "${GUARDIAN_FACTORS}" | jq -e '.' >/dev/null 2>&1; then
-  echo "${GUARDIAN_FACTORS}" | jq -c '.[]' | while read -r factor; do
+# Validate response is a JSON array of objects (not an error or unexpected shape)
+if echo "${GUARDIAN_FACTORS}" | jq -e 'type == "array"' >/dev/null 2>&1; then
+  # Filter to only objects that have both .name (string) and .enabled (boolean)
+  echo "${GUARDIAN_FACTORS}" | jq -c '.[] | select(type == "object" and .name != null and .enabled != null)' | while read -r factor; do
     FACTOR_NAME=$(echo "${factor}" | jq -r '.name')
     FACTOR_ENABLED=$(echo "${factor}" | jq -r '.enabled')
+
+    # Skip if name or enabled couldn't be extracted
+    if [ -z "${FACTOR_NAME}" ] || [ "${FACTOR_NAME}" = "null" ]; then
+      echo "  ⚠ Skipping guardian factor with missing name"
+      continue
+    fi
+
     curl -s --request PUT \
       --url "https://${UPPER_REGION_AUTH0_DOMAIN}/api/v2/guardian/factors/${FACTOR_NAME}" \
       --header "authorization: Bearer ${UPPER_REGION_TOKEN}" \
@@ -270,7 +279,8 @@ if echo "${GUARDIAN_FACTORS}" | jq -e '.' >/dev/null 2>&1; then
   done
   log_ok "Guardian factors synced."
 else
-  log_info "Skipping Guardian factors (unable to retrieve from Lower Region)."
+  log_info "Skipping Guardian factors (unable to retrieve from Lower Region or unexpected response)."
+  log_info "Response (first 300 chars): ${GUARDIAN_FACTORS:0:300}"
 fi
 
 # --- Attack Protection (Brute Force, Breached Password, Suspicious IP) ---
