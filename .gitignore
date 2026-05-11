@@ -1,6 +1,9 @@
 # Generated at runtime - do not commit
 auth0/exported/
 
+# AuthGuardian AI — generated reports
+review-engine/reports/*.md
+
 # Node
 node_modules/
 

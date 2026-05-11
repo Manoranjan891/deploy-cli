@@ -1,0 +1,32 @@
+{
+  "name": "authguardian-ai",
+  "version": "1.0.0",
+  "description": "AuthGuardian AI — Enterprise-grade AI-assisted IAM governance and secure deployment review platform for Auth0 CI/CD pipelines",
+  "main": "src/index.js",
+  "scripts": {
+    "review": "node src/index.js",
+    "review:deployment": "node src/index.js --mode deployment",
+    "review:code": "node src/index.js --mode code",
+    "review:all": "node src/index.js --mode all",
+    "test": "node --test src/**/*.test.js"
+  },
+  "keywords": [
+    "auth0",
+    "iam",
+    "security",
+    "governance",
+    "devops",
+    "ci-cd",
+    "code-review"
+  ],
+  "author": "Toyota Motor North America — IAM Platform Engineering",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0",
+    "glob": "^10.3.10"
+  }
+}
