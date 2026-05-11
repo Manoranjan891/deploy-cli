@@ -71,7 +71,11 @@ async function main() {
     console.log('');
     console.log('✅ No Auth0 configuration changes detected. Nothing to review.');
     console.log('');
-    writeEmptySummary();
+    const noChangeSummary = '## 🛡️ AuthGuardian AI — No Changes Detected\n\n' +
+      '> No Auth0 configuration changes were found in this deployment.\n' +
+      '> Review skipped. Deployment can proceed.\n';
+    githubPublisher.writeJobSummary(noChangeSummary);
+    githubPublisher.saveReports({ summaryReport: noChangeSummary });
     setOutputs({ findings: 0, status: 'PASS', canDeploy: true });
     return;
   }
